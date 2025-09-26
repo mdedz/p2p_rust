@@ -9,6 +9,7 @@ mod peer;
 mod client;
 mod server;
 mod protocol;
+mod ui;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -45,9 +46,11 @@ async fn main() -> anyhow::Result<()>{
     let mut lines = stdin.lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
-        if line.trim().is_empty() {
-            continue;
-        }
+        let line_trim = line.trim();
+        
+        if line_trim.is_empty() { continue; }
+        if line_trim.starts_with("/"){ ui::parse_command(&line_trim[1..], peer_table.clone()).await; continue; }
+        
         let peers_snapshot = {
             let peers = peer_table.lock().await;
             peers.clone()
