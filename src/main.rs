@@ -1,6 +1,6 @@
 
 use clap::{Parser};
-use tokio::io::{self, AsyncBufReadExt};
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
 use std::sync::{Arc};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
@@ -17,23 +17,27 @@ struct Args {
     port: u16,
     #[arg(long)]
     peer: Option<String>,
+    #[arg(long)]
+    uname: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
     let args = Args::parse();
+    let uname = args.uname.unwrap_or_else(|| "stranger".to_string());
+    let uname_clone = uname.clone();
 
     let peer_table: Arc<Mutex<HashMap<String, peer::Peer>>>  = Arc::new(Mutex::new(HashMap::new()));
 
     let server_peers = peer_table.clone();
     tokio::spawn(async move {
-        server::run(args.port, server_peers).await.unwrap();
+        server::run(args.port, server_peers, uname).await.unwrap();
     });
 
     if let Some(peer_addr) = args.peer{
         let client_peers = peer_table.clone();
         tokio::spawn(async move {
-            client::connect(peer_addr, client_peers.clone()).await;
+            client::connect(peer_addr, client_peers.clone(), uname_clone).await;
         });
     }
 
@@ -41,7 +45,9 @@ async fn main() -> anyhow::Result<()>{
     let mut lines = stdin.lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
-        println!("starting typing");
+        if line.trim().is_empty() {
+            continue;
+        }
         let peers_snapshot = {
             let peers = peer_table.lock().await;
             peers.clone()
@@ -50,6 +56,5 @@ async fn main() -> anyhow::Result<()>{
             let _ = peer.send_message(line.clone()).await;
         }
     }
-    println!("exit");
     Ok(())
 }

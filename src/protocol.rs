@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 pub async fn handle_message(peer: &mut Peer, peer_table: &Arc<Mutex<HashMap<String, Peer>>>) -> anyhow::Result<()> {
     
-    let msg = peer.read_message().await?;
-    println!("Received: {}", msg);
+    let (uname, msg) = peer.read_message().await?;
+    println!("{}: {}", uname, msg);
 
     Ok(())
 }

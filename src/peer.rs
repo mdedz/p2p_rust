@@ -9,15 +9,17 @@ pub struct Peer {
     pub addr: String,
     write_half: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
     read_half: Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>,
+    uname: String
 }
 
 impl Peer {
-    pub fn new (addr: String, socket: TcpStream) -> Self {
+    pub fn new (addr: String, socket: TcpStream, uname: &String) -> Self {
         let (read_half, write_half) = socket.into_split();
         Self {
             addr,
             write_half: Arc::new(Mutex::new(write_half)), 
             read_half: Arc::new(Mutex::new(read_half)),
+            uname: uname.to_string(),
         }
     }
 
@@ -27,12 +29,12 @@ impl Peer {
         Ok(())
     }
 
-    pub async fn read_message(&mut self) -> anyhow::Result<String> {
+    pub async fn read_message(&mut self) -> anyhow::Result<(&String, String)> {
         let mut buf = vec![0; 1024];
         let mut socket = self.read_half.lock().await;
         let n = socket.read(&mut buf).await?;
 
-        Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+        Ok((&self.uname, String::from_utf8_lossy(&buf[..n]).to_string()))
     }
 }
 
