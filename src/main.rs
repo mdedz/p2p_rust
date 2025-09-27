@@ -1,6 +1,6 @@
 
 use clap::{Parser};
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{self, AsyncBufReadExt};
 use std::sync::{Arc};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()>{
 
     let server_peers = peer_table.clone();
     tokio::spawn(async move {
-        server::run(args.port, server_peers, uname).await.unwrap();
+        server::run(args.port, server_peers, &uname).await.unwrap();
     });
 
     if let Some(peer_addr) = args.peer{

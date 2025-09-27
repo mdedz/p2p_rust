@@ -1,5 +1,4 @@
 use std::sync::{Arc};
-use anyhow::anyhow;
 use tokio::sync::Mutex;
 use tokio::{
     io::{AsyncWriteExt, AsyncReadExt},
@@ -21,20 +20,19 @@ async fn _uname_is_unique(uname: String, peer_table: Arc<Mutex<HashMap<String, P
 }
 
 impl Peer {
-    pub fn new (addr: String, socket: TcpStream, uname: &String, peer_table: Arc<Mutex<HashMap<String, Peer>>>) -> anyhow::Result<Self> {
-        let (read_half, write_half) = socket.into_split();
-        if !_uname_is_unique(*uname, peer_table.clone()) {
-            return Err(anyhow!("Username is already taken: {}", uname));
-        }
+    pub fn new (addr: String, socket: TcpStream, uname: &String) -> Self{
+        // if !_uname_is_unique(*uname, peer_table.clone()) {
+        //     return Err(anyhow!("Username is already taken: {}", uname));
+        // }
 
         let (read_half, write_half) = socket.into_split();
 
-        Ok(Self {
+        Self {
             addr,
             write_half: Arc::new(Mutex::new(write_half)),
             read_half: Arc::new(Mutex::new(read_half)),
             uname: uname.clone(),
-        })
+        }
     }
     
 
