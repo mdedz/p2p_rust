@@ -14,17 +14,23 @@ pub struct Peer {
     pub uname: String //unique
 }
 
-async fn _uname_is_unique(uname: String, peer_table: Arc<Mutex<HashMap<String, Peer>>>) -> bool{
-    let peers = peer_table.lock().await;
-    !peers.values().any(|p| p.uname == uname)
+async fn _uname_is_unique(uname: String, peer_table: Arc<Mutex<HashMap<String, Arc<Mutex<Peer>> >>>) -> bool{
+    let peers_snapshot: Vec<Arc<Mutex<Peer>>> = {
+        let peers = peer_table.lock().await;
+        peers.values().cloned().collect()
+    };
+
+    for p in peers_snapshot {
+        let peer = p.lock().await;
+        if peer.uname == uname {
+            return false;
+        }
+    }
+    true
 }
 
 impl Peer {
     pub fn new (addr: String, socket: TcpStream, uname: &String) -> Self{
-        // if !_uname_is_unique(*uname, peer_table.clone()) {
-        //     return Err(anyhow!("Username is already taken: {}", uname));
-        // }
-
         let (read_half, write_half) = socket.into_split();
 
         Self {
@@ -37,6 +43,7 @@ impl Peer {
     
 
     pub async fn send_message(&self, msg: String) -> anyhow::Result<()> {
+        println!("test");
         let mut socket = self.write_half.lock().await;
         socket.write_all(msg.as_bytes()).await?;
         Ok(())

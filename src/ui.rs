@@ -1,19 +1,12 @@
-use crate::peer::Peer;
-use std::sync::{Arc};
-use tokio::sync::Mutex;
-use std::collections::HashMap;
+use crate::{peer_manager::PeerManager};
 
-pub async fn parse_command(command: &str, peer_table: Arc<Mutex<HashMap<String, Peer>>>){
+pub async fn parse_command(command: &str, peer_manager:PeerManager){
     match command {
-        "l" => {get_all_users(peer_table).await;},
+        "l" => {get_all_users(peer_manager).await;},
         _ => println!("All commands:\nl:List all users")
     }
 }
 
-pub async fn get_all_users(peer_table: Arc<Mutex<HashMap<String, Peer>>>){
-    let peers = peer_table.lock().await;
-    println!("Users List");
-    for peer in peers.values(){
-        println!("{}", peer.uname)
-    }
+pub async fn get_all_users(peer_manager:PeerManager){
+    peer_manager.list_users().await;
 }

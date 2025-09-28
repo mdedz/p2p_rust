@@ -1,23 +1,26 @@
 use tokio::net::TcpStream;
 use std::sync::{Arc};
 use tokio::sync::Mutex;
-use std::collections::HashMap;
-use crate::peer::{self, Peer};
+use crate::{peer_manager::PeerManager};
+use crate::peer::{Peer};
 use crate::protocol::send_join;
 use crate::protocol::handle_message;
 
-pub async fn connect(addr: String, peer_table: Arc<Mutex<HashMap<String, peer::Peer>>>, uname: String) {
+pub async fn connect(addr: String, peer_manager: PeerManager, uname: String) {
     match TcpStream::connect(&addr).await {
         Ok(socket) => {
             println!("Connected to {}", addr);
-            let mut peer = Peer::new(addr.clone(), socket, &"Stranger".to_string());
-            
-            peer_table.lock().await.insert(addr.clone(), peer.clone());
-            send_join(&mut peer, uname).await;
+            let peer = Arc::new(Mutex::new(Peer::new(addr.clone(), socket, &"Stranger".to_string())));
+
+            peer_manager.add_peer(addr.clone(), peer.clone()).await;
+
+            let peer_guard = peer.lock().await;
+            send_join(peer_guard, uname).await;
 
             loop {
-                if let Err(_) = handle_message(&mut peer).await{
-                    peer_table.lock().await.remove(&addr.clone());
+                let peer_guard = peer.lock().await;
+                if let Err(_) = handle_message(peer_guard).await{
+                    peer_manager.remove_peer(&addr.clone()).await;
                     break;
                 }
             }

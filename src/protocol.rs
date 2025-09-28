@@ -1,9 +1,10 @@
 use crate::peer::Peer;
 
-pub async fn handle_message(peer: &mut Peer) -> anyhow::Result<()> {
-    
-    let (uname, msg) = peer.read_message().await?;
+
+pub async fn handle_message(mut peer_guard: tokio::sync::MutexGuard<'_, Peer>) -> anyhow::Result<()> {
+    let (uname, msg) = peer_guard.read_message().await?;
     println!("handle message {}: {}", uname, msg);
+
     if msg.starts_with("JOIN"){
         let parts: Vec<&str> = msg.split("|").collect();
         if parts.len() == 3{
@@ -11,14 +12,17 @@ pub async fn handle_message(peer: &mut Peer) -> anyhow::Result<()> {
             let uname = parts[2].to_string();
 
             println!("Retrieved data from new peer addr: {}; uname: {}", addr, uname);
-
-            peer.uname = uname;
+            
+            peer_guard.uname = uname;
         }
     }
 
     Ok(())
 }
 
-pub async fn send_join(peer: &mut Peer, uname: String) {
-    peer.send_message(format!("JOIN|{}|{}", peer.addr.clone(), uname)).await.unwrap();
+pub async fn send_join(peer_guard: tokio::sync::MutexGuard<'_, Peer>, uname: String) {
+    peer_guard
+        .send_message(format!("JOIN|{}|{}", peer_guard.addr.clone(), uname))
+        .await
+        .unwrap();
 }
