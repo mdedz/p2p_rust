@@ -1,10 +1,10 @@
 use tokio::net::TcpStream;
 use std::sync::{Arc};
 use tokio::sync::Mutex;
+use crate::network;
 use crate::{peer_manager::PeerManager};
 use crate::peer::{Peer};
 use crate::protocol::send_join;
-use crate::protocol::handle_message;
 
 pub async fn connect(addr: String, peer_manager: PeerManager, uname: String) {
     match TcpStream::connect(&addr).await {
@@ -17,14 +17,10 @@ pub async fn connect(addr: String, peer_manager: PeerManager, uname: String) {
             let peer_clone = peer.clone();
             send_join(peer_clone, uname).await;
 
-            loop {
-                if let Err(_) = handle_message(peer.clone()).await {
-                    peer_manager.remove_peer(&addr.clone()).await;
-                    break;
-                }
-            }
-
+            network::listen(peer.clone(), peer_manager, &addr).await;
+            
         }
         Err(e) => println!("Failed to connect to {}: {}", addr, e)
     }
+    send_join(peer_clone, uname).await;
 }

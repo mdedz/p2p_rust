@@ -9,6 +9,7 @@ mod server;
 mod protocol;
 mod ui;
 mod peer_manager;
+mod network;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]

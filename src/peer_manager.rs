@@ -17,6 +17,11 @@ impl PeerManager {
 
     pub async fn add_peer(&self, addr: String, peer: Arc<Mutex<Peer>>) {
         let mut peers = self.peers.lock().await;
+        if peers.contains_key(&addr) {
+            println!("Peer is already in list: {}", addr);
+            return;
+        }
+
         peers.insert(addr, peer);
     }
 
