@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()>{
                     .await;
                 continue; 
         }
-        peer_manager.broadcast_message(line);
+        peer_manager.broadcast_message(line).await;
     }
     Ok(())
 }

@@ -14,16 +14,15 @@ pub async fn connect(addr: String, peer_manager: PeerManager, uname: String) {
 
             peer_manager.add_peer(addr.clone(), peer.clone()).await;
 
-            let peer_guard = peer.lock().await;
-            send_join(peer_guard, uname).await;
+            let peer_clone = peer.clone();
+            send_join(peer_clone, uname).await;
+loop {
+    if let Err(_) = handle_message(peer.clone()).await {
+        peer_manager.remove_peer(&addr.clone()).await;
+        break;
+    }
+}
 
-            loop {
-                let peer_guard = peer.lock().await;
-                if let Err(_) = handle_message(peer_guard).await{
-                    peer_manager.remove_peer(&addr.clone()).await;
-                    break;
-                }
-            }
         }
         Err(e) => println!("Failed to connect to {}: {}", addr, e)
     }
