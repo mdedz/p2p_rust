@@ -29,13 +29,13 @@ pub async fn run(port: u16, peer_manager: PeerManager, uname: &String) -> anyhow
             server_pm.add_peer(addr_str.clone(), peer.clone()).await;
 
             send_join(peer.clone(), uname_copy).await;
-loop {
-    if let Err(_) = handle_message(peer.clone()).await {
-        server_pm.remove_peer(&addr_str).await;
-        break;
-    }
-}
-
+            
+            loop {
+                if let Err(_) = handle_message(peer.clone()).await {
+                    server_pm.remove_peer(&addr_str).await;
+                    break;
+                }
+            }
         });
     }
 

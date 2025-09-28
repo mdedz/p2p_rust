@@ -50,6 +50,7 @@ impl PeerManager {
             }
         }
     }
+    
     pub async fn list_users(&self) {
         let peers = self.peers.lock().await;
         println!("Users List:");
