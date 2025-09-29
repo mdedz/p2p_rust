@@ -2,7 +2,7 @@ use crate::{network::handle_peer_list, peer::{self, Peer}, peer_manager::{PeerMa
 use std::{sync::Arc};
 use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
-
+use tokio::sync::mpsc::Sender;
 
 pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -> anyhow::Result<()> {
     let (read_half, uname) = {
@@ -26,17 +26,24 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
         let mut addrs: Vec<String> = Vec::new();
 
         for entry in peers_str.split(';') {
-            if entry.trim().is_empty() {
+            let entry = entry.trim();
+            if entry.is_empty() {
                 continue;
             }
 
-            if let Some((addr, _uname)) = entry.split_once('|') { 
-                addrs.push(addr.to_string());
+            match serde_json::from_str::<PeerSummary>(entry) {
+                Ok(peer_summary) => {
+                    addrs.push(peer_summary.addr);
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse peer entry '{}': {}", entry, e);
+                }
             }
         }
 
         handle_peer_list(peer_manager, addrs).await?;
-    } else {
+    }
+    else {
         println!("{}: {}", uname, msg);
     }
 
@@ -44,34 +51,12 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
 }
 
 pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, peer_manager: PeerManager) {
-    let tx = {
-        let server_pg = server_peer.lock().await;
-        server_pg.tx_clone()
-    };
-
-    let client_info_s = serde_json::to_string(&client_info).unwrap();
-
-    if let Err(e) = tx.send(format!("JOIN|{}\n", client_info_s)).await {
+    let (tx, joint_payload_msg) = join_payload(server_peer, client_info).await;
+    if let Err(e) = tx.send(joint_payload_msg).await {
         eprintln!("send_join failed: {}", e);
     }
     
-    //Collect all peers and send the info
-    let summaries = peer_manager.collect_peers().await;
-    let mut payload = String::from("PEERS|");
-
-    payload.push_str(
-        &summaries
-        .iter()
-        .map(|p| serde_json::to_string(&p).unwrap()) // Используем "|" вместо ":"
-        .collect::<Vec<_>>()
-        .join(";")
-    );
-
-    let peers = {
-        let guard = peer_manager.peers.lock().await;
-        guard.values().cloned().collect::<Vec<_>>()
-    };
-
+    let (payload, peers) = peers_payload(peer_manager).await;
     for peer_arc in peers {
         let msg = payload.clone();
         let tx = {
@@ -84,3 +69,32 @@ pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, p
     }
 }
 
+async fn join_payload(server_peer: Arc<Mutex<Peer>>, client_info:PeerSummary) -> (Sender<String>, String){
+    let tx: Sender<String> = {
+        let server_pg = server_peer.lock().await;
+        server_pg.tx_clone()
+    };
+    
+    let client_info_s = serde_json::to_string(&client_info).unwrap();
+    ( tx, format!("JOIN|{}\n", client_info_s) )
+}
+
+pub async fn peers_payload(peer_manager: PeerManager, ) -> (String, Vec<Arc<Mutex<Peer>>>){
+    let summaries = peer_manager.collect_peers().await;
+    let mut payload = String::from("PEERS|");
+    
+    payload.push_str(
+        &summaries
+        .iter()
+        .map(|p| serde_json::to_string(&p).unwrap()) // Используем "|" вместо ":"
+        .collect::<Vec<_>>()
+        .join(";")
+    );
+    
+    let peers: Vec<Arc<Mutex<Peer>>> = {
+        let guard = peer_manager.peers.lock().await;
+        guard.values().cloned().collect::<Vec<_>>()
+    };
+    println!("{}", payload);
+    (payload, peers)
+}
