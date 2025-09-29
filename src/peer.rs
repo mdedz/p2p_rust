@@ -1,6 +1,6 @@
 use std::sync::{Arc};
 use tokio::{
-    io::{AsyncWriteExt, AsyncReadExt},
+    io::{AsyncWriteExt, BufReader, AsyncBufReadExt},
     net::{TcpStream},
     sync::{mpsc, Mutex},
 };
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub struct Peer {
     pub addr: String,
     tx: mpsc::Sender<String>,
-    read_half: Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>,
+    read_half: Arc<Mutex<BufReader<tokio::net::tcp::OwnedReadHalf>>>,
     pub uname: String 
 }
 
@@ -29,18 +29,15 @@ async fn _uname_is_unique(uname: String, peer_table: Arc<Mutex<HashMap<String, A
     true
 }
 
-pub async fn read_message(read_half: Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>) -> anyhow::Result<String> {
-    let mut buf = vec![0; 1024];
+pub async fn read_message(reader: Arc<Mutex<BufReader<tokio::net::tcp::OwnedReadHalf>>>) -> anyhow::Result<String> {
+    let mut line = String::new();
+    let mut guard = reader.lock().await;
 
-    let n = {
-        let mut socket = read_half.lock().await;
-        socket.read(&mut buf).await?
-    };
-
+    let n = guard.read_line(&mut line).await?;
     if n == 0 {
-        anyhow::bail!("Connection is lost")
+        anyhow::bail!("Connection is lost");
     }
-    Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+    Ok(line.trim_end().to_string())
 }
 
 impl Peer {
@@ -60,16 +57,16 @@ impl Peer {
                 }
             }
         });
-
+        let buf_reader = BufReader::new(read_half);
         Self {
             addr,
             tx,
-            read_half: Arc::new(Mutex::new(read_half)),
+            read_half: Arc::new(Mutex::new(buf_reader)),
             uname: uname.clone(),
         }
     }
     
-    pub fn read_half_clone(&self) -> Arc<Mutex<tokio::net::tcp::OwnedReadHalf>> {
+    pub fn read_half_clone(&self) -> Arc<Mutex<BufReader<tokio::net::tcp::OwnedReadHalf>>> {
         self.read_half.clone()
     }
 
@@ -86,3 +83,5 @@ impl Peer {
     }
 }
 
+unsafe impl Send for Peer {}
+unsafe impl Sync for Peer {}

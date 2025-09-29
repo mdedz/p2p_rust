@@ -5,8 +5,14 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct PeerManager {
-    peers: Arc<Mutex<HashMap<String, Arc<Mutex<Peer>>>>>, 
+    pub peers: Arc<Mutex<HashMap<String, Arc<Mutex<Peer>>>>>, 
 }
+
+pub struct PeerSummary {
+    pub addr: String,
+    pub uname: String,
+}
+
 
 impl PeerManager {
     pub fn new() -> Self {
@@ -23,6 +29,26 @@ impl PeerManager {
         }
 
         peers.insert(addr, peer);
+    }
+
+    pub async fn collect_peers(&self) -> Vec<PeerSummary>{
+        let peer_entries: Vec<(String, Arc<Mutex<Peer>>)> = {
+            let peers_guard = &self.peers.lock().await;
+            peers_guard.iter()
+                .map(|(addr, peer_arc)| (addr.clone(), peer_arc.clone()))
+                .collect()
+        };
+
+        let mut summaries: Vec<(PeerSummary)> = Vec::new();
+        for (addr, peer_arc) in peer_entries {
+            let peer_guard = peer_arc.lock().await;
+            summaries.push(PeerSummary {
+                addr: addr,
+                uname: peer_guard.uname.clone(),
+            });
+        }
+
+        summaries        
     }
 
     pub async fn remove_peer(&self, addr: &str){
@@ -64,5 +90,8 @@ impl PeerManager {
             println!("{}", peer.uname);
         }
     }
-    
+
 }
+
+unsafe impl Send for PeerManager {}
+unsafe impl Sync for PeerManager {}
