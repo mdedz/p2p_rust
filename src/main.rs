@@ -33,14 +33,17 @@ async fn main() -> anyhow::Result<()>{
     let server_pm = peer_manager.clone();
     let server_addr = format!("127.0.0.1:{}", args.port);
     let server_info = PeerSummary { addr: server_addr, uname: uname };
+    
+    let server_info_c = server_info.clone();
     tokio::spawn(async move {
         server::run(server_info, server_pm).await.unwrap();
     });
     
     if let Some(peer_addr) = args.peer{
         let client_pm = peer_manager.clone();
+        let new_server_info = PeerSummary { addr: peer_addr, uname: "Stranger".to_string() };
         tokio::spawn(async move {
-            client::connect(peer_addr, client_pm, uname_clone).await;
+            client::connect(server_info_c, new_server_info, client_pm).await;
         });
     }
 

@@ -17,12 +17,11 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     if msg.starts_with("JOIN") {
         // let parts: Vec<&str> = msg.splitn(2, '|').collect();
         let parts: Vec<&str> = msg.split("|").collect();
-        if parts.len() == 3 {
-            let peer_info: PeerSummary = serde_json::from_str(parts[1]).unwrap();
-            let mut peer_guard = peer.lock().await;
-            peer_guard.uname = peer_info.uname; 
-            peer_guard.addr = peer_info.addr; 
-        }
+        let peer_info: PeerSummary = serde_json::from_str(parts[1]).unwrap();
+        let mut peer_guard = peer.lock().await;
+        println!("New name {}", peer_info.uname);
+        peer_guard.uname = peer_info.uname; 
+        peer_guard.addr = peer_info.addr; 
         
 
         // let parts: Vec<&str> = msg.split("|").collect();
