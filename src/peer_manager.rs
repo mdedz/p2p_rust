@@ -43,11 +43,11 @@ impl PeerManager {
                 .collect()
         };
 
-        let mut summaries: Vec<(PeerSummary)> = Vec::new();
+        let mut summaries: Vec<PeerSummary> = Vec::new();
         for (addr, peer_arc) in peer_entries {
             let peer_guard = peer_arc.lock().await;
             summaries.push(PeerSummary {
-                addr: addr,
+                addr: peer_guard.addr.clone(),
                 uname: peer_guard.uname.clone(),
             });
         }
