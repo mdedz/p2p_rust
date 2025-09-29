@@ -1,7 +1,7 @@
 
 use clap::{Parser};
 use tokio::io::{self, AsyncBufReadExt};
-use crate::peer_manager::PeerManager;
+use crate::peer_manager::{PeerManager, PeerSummary};
 
 mod peer;
 mod client;
@@ -28,8 +28,10 @@ async fn main() -> anyhow::Result<()>{
     let uname = args.uname.unwrap_or_else(|| "stranger".to_string());
     let uname_clone = uname.clone();
 
-    let peer_manager = PeerManager::new();
-
+    let _addr = format!("127.0.0.1:{}", args.port);
+    let ps = PeerSummary { addr: _addr, uname: uname .clone()};
+    let peer_manager = PeerManager::new(ps);
+    
     let server_pm = peer_manager.clone();
     tokio::spawn(async move {
         server::run(args.port, server_pm, &uname).await.unwrap();

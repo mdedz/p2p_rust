@@ -4,20 +4,22 @@ use tokio::sync::Mutex;
 use std::collections::HashMap;
 
 #[derive(Clone)]
-pub struct PeerManager {
-    pub peers: Arc<Mutex<HashMap<String, Arc<Mutex<Peer>>>>>, 
-}
-
 pub struct PeerSummary {
     pub addr: String,
     pub uname: String,
 }
+#[derive(Clone)]
+pub struct PeerManager {
+    pub peers: Arc<Mutex<HashMap<String, Arc<Mutex<Peer>>>>>, 
+    pub self_peer: PeerSummary, 
+}
 
 
 impl PeerManager {
-    pub fn new() -> Self {
+    pub fn new(ps: PeerSummary) -> Self {
         Self {
-            peers: Arc::new(Mutex::new(HashMap::new()))
+            peers: Arc::new(Mutex::new(HashMap::new())),
+            self_peer: ps
         }
     }
 
@@ -93,5 +95,3 @@ impl PeerManager {
 
 }
 
-unsafe impl Send for PeerManager {}
-unsafe impl Sync for PeerManager {}

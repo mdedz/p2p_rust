@@ -22,6 +22,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
             peer_guard.uname = uname.clone();
         }
     }
+    
     if msg.starts_with("PEERS|") {
         let peers_str = &msg["PEERS|".len()..];
         let mut addrs: Vec<String> = Vec::new();
@@ -31,7 +32,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
                 continue;
             }
 
-            if let Some((addr, _uname)) = entry.split_once('|') { // Теперь разделитель "|"
+            if let Some((addr, _uname)) = entry.split_once('|') { 
                 addrs.push(addr.to_string());
             }
         }
@@ -39,7 +40,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
         handle_peer_list(peer_manager, addrs).await?;
     }
 
-    println!("{}: {}\n", uname, msg);
+    println!("{}: {}", uname, msg);
     Ok(())
 }
 

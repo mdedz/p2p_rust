@@ -1,20 +1,13 @@
 use std::sync::{Arc};
+use anyhow::bail;
 use tokio::sync::Mutex;
 use crate::{peer::Peer};
 use crate::{peer_manager::PeerManager};
 use crate::protocol::{handle_message};
-use std::collections::HashMap;
 
 use tokio::net::TcpStream;
-use crate::{network, peer_manager};
+use crate::{network};
 
-pub struct PeerInfo {
-    addr: String,
-    uname: String,
-    last_seen: std::time::SystemTime,
-}
-
-type PeerMap = Arc<Mutex<HashMap<String, PeerInfo>>>;
 
 pub async fn listen(peer: Arc<Mutex<Peer>>, pm: PeerManager, addr: String){
     loop {
@@ -26,6 +19,9 @@ pub async fn listen(peer: Arc<Mutex<Peer>>, pm: PeerManager, addr: String){
 }
 
 pub async fn connect_new_peer(addr: &String, pm:PeerManager) -> anyhow::Result<Arc<Mutex<Peer>>> {
+    if *addr == pm.self_peer.addr {
+        bail!("Self peer")
+    } 
     match TcpStream::connect(addr).await {
         Ok(socket) => {
             println!("Connected to {}", addr);
