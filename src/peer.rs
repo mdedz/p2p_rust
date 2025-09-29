@@ -37,7 +37,9 @@ pub async fn read_message(reader: Arc<Mutex<BufReader<tokio::net::tcp::OwnedRead
     if n == 0 {
         anyhow::bail!("Connection is lost");
     }
-    Ok(line.trim_end().to_string())
+    let msg = line.trim_end().to_string();
+    println!("{}", msg.clone());
+    Ok(msg)
 }
 
 impl Peer {
@@ -82,6 +84,3 @@ impl Peer {
         self.uname.clone()
     }
 }
-
-unsafe impl Send for Peer {}
-unsafe impl Sync for Peer {}

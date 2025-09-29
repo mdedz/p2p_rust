@@ -1,9 +1,11 @@
-use crate::{network::handle_peer_list, peer::{self, Peer}, peer_manager::PeerManager};
+use crate::{network::handle_peer_list, peer::{self, Peer}, peer_manager::{PeerManager, PeerSummary}};
 use std::{sync::Arc};
 use tokio::sync::Mutex;
+use serde::{Serialize, Deserialize};
+
 
 pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -> anyhow::Result<()> {
-    let (read_half, mut uname) = {
+    let (read_half, uname) = {
         let peer_guard = peer.lock().await;
         (peer_guard.read_half_clone(), peer_guard.uname_clone())
     };
@@ -13,14 +15,24 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     };
 
     if msg.starts_with("JOIN") {
+        // let parts: Vec<&str> = msg.splitn(2, '|').collect();
         let parts: Vec<&str> = msg.split("|").collect();
         if parts.len() == 3 {
-            let _addr = parts[1].to_string();
-            uname = parts[2].to_string();
-            
+            let peer_info: PeerSummary = serde_json::from_str(parts[1]).unwrap();
             let mut peer_guard = peer.lock().await;
-            peer_guard.uname = uname.clone();
+            peer_guard.uname = peer_info.uname; 
+            peer_guard.addr = peer_info.addr; 
         }
+        
+
+        // let parts: Vec<&str> = msg.split("|").collect();
+        // if parts.len() == 3 {
+        //     let _addr = parts[1].to_string();
+        //     uname = parts[2].to_string();
+            
+        //     let mut peer_guard = peer.lock().await;
+        //     peer_guard.uname = uname.clone();
+        // }
     }
     
     if msg.starts_with("PEERS|") {
@@ -50,7 +62,10 @@ pub async fn send_join(peer: Arc<Mutex<Peer>>, peer_manager: PeerManager, uname:
         (peer_guard.addr_clone(), peer_guard.tx_clone())
     };
 
-    if let Err(e) = tx.send(format!("JOIN|{}|{}\n", addr, uname)).await {
+    let peer_info = PeerSummary { addr, uname };
+    let serialized = serde_json::to_string(&peer_info).unwrap();
+
+    if let Err(e) = tx.send(format!("JOIN|{}\n", serialized)).await {
         eprintln!("send_join failed: {}", e);
     }
     
@@ -60,7 +75,7 @@ pub async fn send_join(peer: Arc<Mutex<Peer>>, peer_manager: PeerManager, uname:
     payload.push_str(
         &summaries
         .iter()
-        .map(|p| format!("{}|{}", p.addr, p.uname)) // Используем "|" вместо ":"
+        .map(|p| serde_json::to_string(&p).unwrap()) // Используем "|" вместо ":"
         .collect::<Vec<_>>()
         .join(";")
     );

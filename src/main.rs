@@ -28,9 +28,7 @@ async fn main() -> anyhow::Result<()>{
     let uname = args.uname.unwrap_or_else(|| "stranger".to_string());
     let uname_clone = uname.clone();
 
-    let _addr = format!("127.0.0.1:{}", args.port);
-    let ps = PeerSummary { addr: _addr, uname: uname .clone()};
-    let peer_manager = PeerManager::new(ps);
+    let peer_manager = PeerManager::new();
     
     let server_pm = peer_manager.clone();
     tokio::spawn(async move {
@@ -58,7 +56,7 @@ async fn main() -> anyhow::Result<()>{
                     .await;
                 continue; 
         }
-        peer_manager.broadcast_message(line).await;
+        peer_manager.broadcast_message(format!("{}\n", line)).await;
     }
     Ok(())
 }
