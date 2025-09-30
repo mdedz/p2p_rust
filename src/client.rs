@@ -7,7 +7,7 @@ use crate::peer::{Peer};
 use crate::protocol::send_join;
 
 pub async fn connect(client_peer_info: PeerSummary, server_info: PeerSummary, peer_manager: PeerManager) -> anyhow::Result<()> {
-    let new_peer: Arc<Mutex<Peer>> = connect_new_peer(&server_info.addr, peer_manager.clone()).await?;
+    let new_peer: Arc<Mutex<Peer>> = connect_new_peer(server_info.listen_addr.unwrap(), peer_manager.clone()).await?;
     send_join(client_peer_info, new_peer, peer_manager).await;
 
     Ok(())

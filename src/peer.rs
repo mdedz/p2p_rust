@@ -8,7 +8,9 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct Peer {
-    pub addr: String,
+    pub node_id: Option<String>,
+    pub remote_addr: Option<String>,
+    pub listen_addr: Option<String>,
     tx: mpsc::Sender<String>,
     read_half: Arc<Mutex<BufReader<tokio::net::tcp::OwnedReadHalf>>>,
     pub uname: String 
@@ -43,7 +45,7 @@ pub async fn read_message(reader: Arc<Mutex<BufReader<tokio::net::tcp::OwnedRead
 }
 
 impl Peer {
-    pub fn new (addr: String, socket: TcpStream, uname: &String) -> Self{
+    pub fn new (remote_addr:Option<String>, listen_addr: Option<String>, socket: TcpStream, uname: &String, node_id:Option<String> ) -> Self{
         let (read_half, write_half) = socket.into_split();
         
         let (tx, mut rx) = mpsc::channel::<String>(100);
@@ -61,7 +63,9 @@ impl Peer {
         });
         let buf_reader = BufReader::new(read_half);
         Self {
-            addr,
+            node_id,
+            remote_addr,
+            listen_addr,
             tx,
             read_half: Arc::new(Mutex::new(buf_reader)),
             uname: uname.clone(),
@@ -72,8 +76,8 @@ impl Peer {
         self.read_half.clone()
     }
 
-    pub fn addr_clone(&self) -> String {
-        self.addr.clone()
+    pub fn listen_addr_clone(&self) -> String {
+        self.listen_addr.clone().unwrap()
     }
 
     pub fn tx_clone(&self) -> mpsc::Sender<String> {

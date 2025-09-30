@@ -26,24 +26,35 @@ struct Args {
 async fn main() -> anyhow::Result<()>{
     let args = Args::parse();
     let uname = args.uname.unwrap_or_else(|| "stranger".to_string());
-    let uname_clone = uname.clone();
 
     let peer_manager = PeerManager::new();
-    
     let server_pm = peer_manager.clone();
-    let server_addr = format!("127.0.0.1:{}", args.port);
-    let server_info = PeerSummary { addr: server_addr, uname: uname };
     
-    let server_info_c = server_info.clone();
+    //server side
+    let s_listen_addr = format!("127.0.0.1:{}", args.port);
+    let s_info = PeerSummary { 
+        listen_addr: Some(s_listen_addr),
+        remote_addr:None, 
+        node_id: None,
+        uname: Some(uname)
+    };
+    
+    let s_info_copy = s_info.clone();
     tokio::spawn(async move {
-        server::run(server_info, server_pm).await.unwrap();
+        server::run(s_info_copy, server_pm).await.unwrap();
     });
     
+    //client side
     if let Some(peer_addr) = args.peer{
         let client_pm = peer_manager.clone();
-        let new_server_info = PeerSummary { addr: peer_addr, uname: "Stranger".to_string() };
+        let new_peer_info = PeerSummary { 
+            listen_addr: Some(peer_addr),
+            remote_addr: None, 
+            node_id: None,
+            uname: Some("Stranger".to_string()) 
+        };
         tokio::spawn(async move {
-            client::connect(server_info_c, new_server_info, client_pm).await;
+            client::connect(s_info, new_peer_info, client_pm).await;
         });
     }
 
@@ -60,8 +71,10 @@ async fn main() -> anyhow::Result<()>{
                     &line_trim[1..], ui_pm)
                     .await;
                 continue; 
+        } else{
+            peer_manager.broadcast_message(format!("{}\n", line)).await;
         }
-        peer_manager.broadcast_message(format!("{}\n", line)).await;
+        
     }
     Ok(())
 }
