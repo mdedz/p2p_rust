@@ -10,23 +10,32 @@ use crate::{network};
 
 pub async fn listen(peer: Arc<Mutex<Peer>>, pm: PeerManager){
     loop {
-        if let Err(_) = handle_message(pm.clone(), peer.clone()).await {
-            let node_id = {
-                let peer_guard = peer.lock().await;
-                peer_guard.node_id.clone()
-            };
-
-            if let Some(id) = node_id {
-                pm.remove_peer(&id).await;
+        if let Err(e) = handle_message(pm.clone(), peer.clone()).await {
+            if let Some(_) = e.downcast_ref::<std::io::Error>() {
+                if let Some(id) = peer.lock().await.node_id.clone() {
+                    pm.remove_peer(&id).await;
+                }
+                break;
+            } else {
+                eprintln!("protocol error: {}", e);
+                break;
             }
-            
-            break;
         }
     }
 }
 
 pub async fn connect_new_peer(listen_addr: String, pm:PeerManager) -> anyhow::Result<Arc<Mutex<Peer>>> {
     let l_addr_copy = listen_addr.clone();
+    let pm_listen_addr = pm.listen_addr.clone().ok_or_else(|| anyhow::anyhow!("No listen address was specified"))?;
+    
+    if  pm_listen_addr == listen_addr {
+        anyhow::bail!("Cannot connect to itself {}", listen_addr)
+    }
+
+    if pm.contains_listen_addr(listen_addr.clone()).await {
+        anyhow::bail!("Peer is already in list")
+    }
+
     match TcpStream::connect(listen_addr.clone()).await {
         Ok(socket) => {
             println!("Connected to {}", l_addr_copy);
@@ -61,6 +70,7 @@ fn spawn_listen(peer: Arc<Mutex<Peer>>, pm: PeerManager) {
 
 pub async fn handle_peer_list(pm:PeerManager, peer_list: Vec<String>) -> anyhow::Result<()>{
     for listen_addr in peer_list {
+        println!("Connecting new peer {}", listen_addr);
         if let Err(e) = connect_new_peer(listen_addr, pm.clone()).await {
             eprintln!("Failed to connect to peer: {}", e);
         }

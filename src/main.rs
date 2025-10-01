@@ -27,11 +27,11 @@ async fn main() -> anyhow::Result<()>{
     let args = Args::parse();
     let uname = args.uname.unwrap_or_else(|| "stranger".to_string());
 
-    let peer_manager = PeerManager::new();
+    let s_listen_addr = format!("127.0.0.1:{}", args.port);
+    let peer_manager = PeerManager::new(Some(s_listen_addr.clone()));
     let server_pm = peer_manager.clone();
     
     //server side
-    let s_listen_addr = format!("127.0.0.1:{}", args.port);
     let s_info = PeerSummary { 
         listen_addr: Some(s_listen_addr),
         remote_addr:None, 
@@ -41,7 +41,9 @@ async fn main() -> anyhow::Result<()>{
     
     let s_info_copy = s_info.clone();
     tokio::spawn(async move {
-        server::run(s_info_copy, server_pm).await.unwrap();
+        if let Err(e) = server::run(s_info_copy, server_pm).await{
+            println!("Error on server side: {}", e)
+        }
     });
     
     //client side
@@ -54,7 +56,9 @@ async fn main() -> anyhow::Result<()>{
             uname: Some("Stranger".to_string()) 
         };
         tokio::spawn(async move {
-            client::connect(s_info, new_peer_info, client_pm).await;
+            if let Err(e) = client::connect(s_info, new_peer_info, client_pm).await{
+                println!("Error on client side: {}", e)
+            }
         });
     }
 

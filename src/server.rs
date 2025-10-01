@@ -12,19 +12,10 @@ use crate::protocol::{send_join};
 
 pub async fn run(server_info: PeerSummary, peer_manager: PeerManager) -> anyhow::Result<()>{
     let server_info_copy = server_info.clone();
-    let listen_addr = server_info_copy.listen_addr.unwrap();
+    let listen_addr = server_info_copy.listen_addr()?;
     
-    let splitted_addr: Vec<&str> = listen_addr.split(":").collect();
-    let port_str = splitted_addr
-        .get(1)
-        .ok_or_else(|| anyhow::anyhow!("No port provided"))?;
-
-    let port: u16 = port_str
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid port number"))?;
-
-    let listener: TcpListener = TcpListener::bind(("0.0.0.0", port)).await?;
-    println!("Server is listening on {}", port);
+    let listener = TcpListener::bind(listen_addr.as_str()).await?;
+    println!("Server listening on {}", listen_addr);
 
     loop {
         let (socket, remote_addr) = listener.accept().await?;

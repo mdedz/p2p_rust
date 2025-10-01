@@ -37,7 +37,7 @@ pub async fn read_message(reader: Arc<Mutex<BufReader<tokio::net::tcp::OwnedRead
 
     let n = guard.read_line(&mut line).await?;
     if n == 0 {
-        anyhow::bail!("Connection is lost");
+        anyhow::bail!(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Connection is lost"));
     }
     let msg = line.trim_end().to_string();
     println!("{}", msg.clone());

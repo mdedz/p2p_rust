@@ -12,28 +12,34 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     let msg = {
         peer::read_message(read_half).await?
     };
-
+    println!("\nmessage is {}\n", msg);
     if msg.starts_with("JOIN") {
-        let parts: Vec<&str> = msg.split("|").collect();
+        let parts: Vec<&str> = msg.splitn(2, '|').collect();
         if parts.len() < 2 {
-            anyhow::bail!("Invalid JOIN message format");
+            eprintln!("Invalid JOIN message format");
+            return Ok(());
         }
+
         let peer_info: PeerSummary = match serde_json::from_str(parts[1]) {
             Ok(info) => info,
-            Err(e) => anyhow::bail!("Failed to parse JOIN payload: {}", e),
+            Err(e) => {
+                eprintln!("Failed to parse JOIN payload: {}", e);
+                return Ok(());
+            }
         };
 
         let node_id = {
             let mut peer_guard = peer.lock().await;
-            peer_guard.uname = peer_info.uname.unwrap(); 
-            peer_guard.node_id = peer_info.node_id;
+            let peer_node_id = peer_info.node_id()?.clone();
+            peer_guard.uname = peer_info.uname()?;
+            peer_guard.node_id = Some(peer_node_id.clone());
             peer_guard.remote_addr = peer_info.remote_addr;
             peer_guard.listen_addr = peer_info.listen_addr;
 
-            peer_guard.node_id.clone()
+            peer_node_id
         };
 
-        peer_manager.add_peer(node_id.unwrap(), peer.clone()).await;
+        peer_manager.add_peer(node_id, peer.clone()).await;
 
     } else if msg.starts_with("PEERS|") {
         let peers_str = &msg["PEERS|".len()..];
@@ -47,14 +53,14 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
 
             match serde_json::from_str::<PeerSummary>(entry) {
                 Ok(peer_summary) => {
-                    addrs.push(peer_summary.listen_addr.unwrap());
+                    let listen_addr = peer_summary.listen_addr()?;
+                    addrs.push(listen_addr);
                 }
                 Err(e) => {
                     eprintln!("Failed to parse peer entry '{}': {}", entry, e);
                 }
             }
         }
-
         handle_peer_list(peer_manager, addrs).await?;
     }
     else {
@@ -112,6 +118,6 @@ pub async fn peers_payload(peer_manager: PeerManager, ) -> (String, Vec<Arc<Mute
         let guard = peer_manager.peers.lock().await;
         guard.values().cloned().collect::<Vec<_>>()
     };
-    println!("{}", payload);
+    println!("Sending peers from {} to {}", peer_manager.listen_addr.unwrap(), payload);
     (payload, peers)
 }
