@@ -70,6 +70,7 @@ This project demonstrates building a fully asynchronous P2P network with peer ma
 ### Running a server:
 ```bash
 cargo run -- --port 8080 --uname Alice
+```
 
 ### Connecting to a peer:
 
@@ -121,5 +122,3 @@ cargo run -- --port 8081 --peer 127.0.0.1:8080 --uname Bob
 MIT License. Free to use and modify.
 
 ---
-
-```
