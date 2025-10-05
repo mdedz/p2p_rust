@@ -1,4 +1,3 @@
-````markdown
 # Rust P2P Chat
 
 A simple peer-to-peer (P2P) chat application implemented in Rust using **Tokio** for async networking.  
@@ -71,7 +70,6 @@ This project demonstrates building a fully asynchronous P2P network with peer ma
 ### Running a server:
 ```bash
 cargo run -- --port 8080 --uname Alice
-````
 
 ### Connecting to a peer:
 
