@@ -56,7 +56,7 @@ impl PeerManager {
     pub async fn add_peer(&self, node_id: String, peer: Arc<Mutex<Peer>>) {
         let mut peers = self.peers.lock().await;
         if peers.contains_key(&node_id) {
-            println!("Peer is already in list: {}", node_id);
+            // println!("Peer is already in list: {}", node_id);
             return;
         }
 

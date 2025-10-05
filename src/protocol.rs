@@ -12,7 +12,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     let msg = {
         peer::read_message(read_half).await?
     };
-    println!("\nmessage is {}\n", msg);
+
     if msg.starts_with("JOIN") {
         let parts: Vec<&str> = msg.splitn(2, '|').collect();
         if parts.len() < 2 {
@@ -40,6 +40,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
         };
 
         peer_manager.add_peer(node_id, peer.clone()).await;
+        send_peers(peer_manager.clone()).await;
 
     } else if msg.starts_with("PEERS|") {
         let peers_str = &msg["PEERS|".len()..];
@@ -75,12 +76,14 @@ pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, p
     if let Err(e) = tx.send(joint_payload_msg).await {
         eprintln!("send_join failed: {}", e);
     }
-    
+}
+pub async fn send_peers(peer_manager: PeerManager) {
     let (payload, peers) = peers_payload(peer_manager).await;
     for peer_arc in peers {
         let msg = payload.clone();
         let tx = {
             let p = peer_arc.lock().await;
+            // println!("Sending peers to {:?} with {}", p.listen_addr.clone(), payload);
             p.tx_clone()
         };
         if let Err(e) = tx.send(format!("{}\n", msg)).await {
@@ -98,7 +101,7 @@ async fn join_payload(server_peer: Arc<Mutex<Peer>>, mut client_info:PeerSummary
     client_info.node_id = Some(node_id);
 
     let client_info_s = serde_json::to_string(&client_info).unwrap();
-    println!("{}", client_info_s);
+    // println!("{}", client_info_s);
     ( tx, format!("JOIN|{}\n", client_info_s) )
 }
 
@@ -118,6 +121,5 @@ pub async fn peers_payload(peer_manager: PeerManager, ) -> (String, Vec<Arc<Mute
         let guard = peer_manager.peers.lock().await;
         guard.values().cloned().collect::<Vec<_>>()
     };
-    println!("Sending peers from {} to {}", peer_manager.listen_addr.unwrap(), payload);
     (payload, peers)
 }

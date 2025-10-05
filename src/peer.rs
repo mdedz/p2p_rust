@@ -40,7 +40,6 @@ pub async fn read_message(reader: Arc<Mutex<BufReader<tokio::net::tcp::OwnedRead
         anyhow::bail!(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Connection is lost"));
     }
     let msg = line.trim_end().to_string();
-    println!("{}", msg.clone());
     Ok(msg)
 }
 
@@ -74,10 +73,6 @@ impl Peer {
     
     pub fn read_half_clone(&self) -> Arc<Mutex<BufReader<tokio::net::tcp::OwnedReadHalf>>> {
         self.read_half.clone()
-    }
-
-    pub fn listen_addr_clone(&self) -> String {
-        self.listen_addr.clone().unwrap()
     }
 
     pub fn tx_clone(&self) -> mpsc::Sender<String> {

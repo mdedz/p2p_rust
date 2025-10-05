@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()>{
     let s_info_copy = s_info.clone();
     tokio::spawn(async move {
         if let Err(e) = server::run(s_info_copy, server_pm).await{
-            println!("Error on server side: {}", e)
+            eprintln!("Error on server side: {}", e)
         }
     });
     
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()>{
         };
         tokio::spawn(async move {
             if let Err(e) = client::connect(s_info, new_peer_info, client_pm).await{
-                println!("Error on client side: {}", e)
+                eprintln!("Error on client side: {}", e)
             }
         });
     }
