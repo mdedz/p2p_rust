@@ -1,8 +1,9 @@
 use std::sync::{Arc};
 use tokio::sync::Mutex;
+use crate::peer_manager::{summary_to_peer, PeerSummary};
 use crate::{peer::Peer};
 use crate::{peer_manager::PeerManager};
-use crate::protocol::{handle_message};
+use crate::protocol::{handle_message, send_join};
 
 use tokio::net::TcpStream;
 use crate::{network};
@@ -12,7 +13,7 @@ pub async fn listen(peer: Arc<Mutex<Peer>>, pm: PeerManager){
     loop {
         if let Err(e) = handle_message(pm.clone(), peer.clone()).await {
             if let Some(_) = e.downcast_ref::<std::io::Error>() {
-                if let Some(id) = peer.lock().await.node_id.clone() {
+                if let Some(id) = peer.lock().await.summary.node_id() {
                     pm.remove_peer(&id).await;
                 }
                 break;
@@ -26,7 +27,7 @@ pub async fn listen(peer: Arc<Mutex<Peer>>, pm: PeerManager){
 
 pub async fn connect_new_peer(listen_addr: String, pm:PeerManager) -> anyhow::Result<Arc<Mutex<Peer>>> {
     let l_addr_copy = listen_addr.clone();
-    let pm_listen_addr = pm.listen_addr.clone().ok_or_else(|| anyhow::anyhow!("No listen address was specified"))?;
+    let pm_listen_addr = pm.self_peer.lock().await.summary.listen_addr_or_err()?;
     
     if  pm_listen_addr == listen_addr {
         anyhow::bail!("Cannot connect to itself {}", listen_addr)
@@ -38,17 +39,21 @@ pub async fn connect_new_peer(listen_addr: String, pm:PeerManager) -> anyhow::Re
 
     match TcpStream::connect(listen_addr.clone()).await {
         Ok(socket) => {
-            let peer: Arc<Mutex<Peer>> = Arc::new(Mutex::new(Peer::new(
-                None, 
-                Some(l_addr_copy), 
-                socket, 
-                &"Stranger".to_string(),
-                None
-            )));
+            let summary = PeerSummary {
+                remote_addr: None,
+                listen_addr: Some(l_addr_copy),
+                node_id: None,
+                uname: None,
+            };
+
+            let peer = summary_to_peer(summary, Some(socket));
 
             let peer_copy = peer.clone();
-            spawn_listen(peer_copy, pm);
-            
+            spawn_listen(peer_copy, pm.clone());
+
+            let client_info = pm.self_peer.lock().await.summary.clone();
+            send_join(client_info, peer.clone(), pm).await?;
+
             Ok(peer)
         }
         Err(e) => { 
@@ -67,9 +72,9 @@ fn spawn_listen(peer: Arc<Mutex<Peer>>, pm: PeerManager) {
 
 pub async fn handle_peer_list(pm:PeerManager, peer_list: Vec<String>) -> anyhow::Result<()>{
     for listen_addr in peer_list {
-        // println!("Connecting new peer {}", listen_addr);
+        println!("Connecting new peer {}", listen_addr);
         if let Err(e) = connect_new_peer(listen_addr, pm.clone()).await {
-            // eprintln!("Failed to connect to peer: {}", e);
+            eprintln!("Failed to connect to peer: {}", e);
         }
     }
 

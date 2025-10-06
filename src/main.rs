@@ -1,7 +1,7 @@
 
 use clap::{Parser};
 use tokio::io::{self, AsyncBufReadExt};
-use crate::peer_manager::{PeerManager, PeerSummary};
+use crate::peer_manager::{create_node_id, summary_to_peer, PeerManager, PeerSummary};
 
 mod peer;
 mod client;
@@ -25,19 +25,19 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
     let args = Args::parse();
-    let uname = args.uname.unwrap_or_else(|| "stranger".to_string());
-
     let s_listen_addr = format!("127.0.0.1:{}", args.port);
-    let peer_manager = PeerManager::new(Some(s_listen_addr.clone()));
-    let server_pm = peer_manager.clone();
     
     //server side
     let s_info = PeerSummary { 
         listen_addr: Some(s_listen_addr),
         remote_addr:None, 
-        node_id: None,
-        uname: Some(uname)
+        node_id: Some(create_node_id()),
+        uname: args.uname
     };
+
+    let server_peer = summary_to_peer(s_info.clone(), None);
+    let peer_manager = PeerManager::new(server_peer);
+    let server_pm = peer_manager.clone();
     
     let s_info_copy = s_info.clone();
     tokio::spawn(async move {
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()>{
             listen_addr: Some(peer_addr),
             remote_addr: None, 
             node_id: None,
-            uname: Some("Stranger".to_string()) 
+            uname: None
         };
         tokio::spawn(async move {
             if let Err(e) = client::connect(s_info, new_peer_info, client_pm).await{

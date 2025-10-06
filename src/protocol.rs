@@ -6,7 +6,7 @@ use tokio::sync::mpsc::Sender;
 pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -> anyhow::Result<()> {
     let (read_half, uname) = {
         let peer_guard = peer.lock().await;
-        (peer_guard.read_half_clone(), peer_guard.uname_clone())
+        (peer_guard.rx_clone(), peer_guard.summary.uname_or_default())
     };
 
     let msg = {
@@ -30,13 +30,16 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
 
         let node_id = {
             let mut peer_guard = peer.lock().await;
-            let peer_node_id = peer_info.node_id()?.clone();
-            peer_guard.uname = peer_info.uname()?;
-            peer_guard.node_id = Some(peer_node_id.clone());
-            peer_guard.remote_addr = peer_info.remote_addr;
-            peer_guard.listen_addr = peer_info.listen_addr;
+            let node_id = peer_info.node_id_or_err()?;
+            peer_guard.summary = peer_info;
+            // let peer_node_id = peer_info.node_id_or_err()?.clone();
 
-            peer_node_id
+            // peer_guard.summary.uname = Some(peer_info.uname_or_err()?);
+            // peer_guard.summary.node_id = Some(peer_node_id.clone());
+            // peer_guard.summary.remote_addr = peer_info.remote_addr;
+            // peer_guard.summary.listen_addr = peer_info.listen_addr;
+
+            node_id
         };
 
         peer_manager.add_peer(node_id, peer.clone()).await;
@@ -54,7 +57,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
 
             match serde_json::from_str::<PeerSummary>(entry) {
                 Ok(peer_summary) => {
-                    let listen_addr = peer_summary.listen_addr()?;
+                    let listen_addr = peer_summary.listen_addr_or_err()?;
                     addrs.push(listen_addr);
                 }
                 Err(e) => {
@@ -71,19 +74,30 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     Ok(())
 }
 
-pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, peer_manager: PeerManager) {
-    let (tx, joint_payload_msg) = join_payload(server_peer, client_info, peer_manager.clone().node_id).await;
-    if let Err(e) = tx.send(joint_payload_msg).await {
+pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, peer_manager: PeerManager) -> anyhow::Result<()>{
+    let node_id = peer_manager.self_peer.lock().await.summary.node_id_or_err()?;
+
+    let tx: Sender<String> = {
+        let server_pg = server_peer.lock().await;
+        server_pg.tx_clone()
+    };
+
+    let msg = join_payload(client_info, node_id).await;
+    
+    if let Err(e) = tx.send(msg).await {
         eprintln!("send_join failed: {}", e);
     }
+
+    Ok(())
 }
+
 pub async fn send_peers(peer_manager: PeerManager) {
     let (payload, peers) = peers_payload(peer_manager).await;
     for peer_arc in peers {
         let msg = payload.clone();
         let tx = {
             let p = peer_arc.lock().await;
-            // println!("Sending peers to {:?} with {}", p.listen_addr.clone(), payload);
+            println!("Sending peers to {:?} with {}", p.summary.listen_addr(), payload);
             p.tx_clone()
         };
         if let Err(e) = tx.send(format!("{}\n", msg)).await {
@@ -92,17 +106,12 @@ pub async fn send_peers(peer_manager: PeerManager) {
     }
 }
 
-async fn join_payload(server_peer: Arc<Mutex<Peer>>, mut client_info:PeerSummary, node_id: String) -> (Sender<String>, String){
-    let tx: Sender<String> = {
-        let server_pg = server_peer.lock().await;
-        server_pg.tx_clone()
-    };
-
+async fn join_payload(mut client_info:PeerSummary, node_id: String) -> String{
     client_info.node_id = Some(node_id);
 
     let client_info_s = serde_json::to_string(&client_info).unwrap();
     // println!("{}", client_info_s);
-    ( tx, format!("JOIN|{}\n", client_info_s) )
+    format!("JOIN|{}\n", client_info_s)
 }
 
 pub async fn peers_payload(peer_manager: PeerManager, ) -> (String, Vec<Arc<Mutex<Peer>>>){

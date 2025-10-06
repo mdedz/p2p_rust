@@ -4,13 +4,13 @@ use crate::{peer_manager::PeerManager};
 use crate::protocol::{send_join, send_peers};
 
 pub async fn connect(client_peer_info: PeerSummary, server_info: PeerSummary, peer_manager: PeerManager) -> anyhow::Result<()> {
-    let listen_addr = server_info.listen_addr()?;
+    let listen_addr = server_info.listen_addr_or_err()?;
 
     let new_peer= connect_new_peer(listen_addr, peer_manager.clone()).await;
     if let Err(e) = new_peer {
-        // eprintln!("Failed to connect to peer: {}", e);
+        eprintln!("Failed to connect to peer: {}", e);
     } else{
-        send_join(client_peer_info, new_peer?, peer_manager.clone()).await;
+        send_join(client_peer_info, new_peer?, peer_manager.clone()).await?;
         send_peers(peer_manager.clone()).await;
     }
 
