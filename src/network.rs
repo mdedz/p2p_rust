@@ -4,7 +4,7 @@ use crate::peer_manager::{summary_to_peer, PeerSummary};
 use crate::{peer::Peer};
 use crate::{peer_manager::PeerManager};
 use crate::protocol::{handle_message, send_join};
-
+use tracing::{info, warn, error, debug, trace};
 use tokio::net::TcpStream;
 use crate::{network};
 
@@ -18,7 +18,7 @@ pub async fn listen(peer: Arc<Mutex<Peer>>, pm: PeerManager){
                 }
                 break;
             } else {
-                eprintln!("protocol error: {}", e);
+                error!("protocol error: {}", e);
                 break;
             }
         }
@@ -58,7 +58,7 @@ pub async fn connect_new_peer(listen_addr: String, pm:PeerManager) -> anyhow::Re
         }
         Err(e) => { 
             let err_text = format!("Failed to connect to {}: {}", listen_addr, e);
-            println!("{}", err_text);
+            error!("{}", err_text);
             anyhow::bail!(err_text);
         }
     }
@@ -72,9 +72,9 @@ fn spawn_listen(peer: Arc<Mutex<Peer>>, pm: PeerManager) {
 
 pub async fn handle_peer_list(pm:PeerManager, peer_list: Vec<String>) -> anyhow::Result<()>{
     for listen_addr in peer_list {
-        println!("Connecting new peer {}", listen_addr);
+        debug!("Connecting new peer {}", listen_addr);
         if let Err(e) = connect_new_peer(listen_addr, pm.clone()).await {
-            eprintln!("Failed to connect to peer: {}", e);
+            warn!("Failed to connect to peer: {}", e);
         }
     }
 

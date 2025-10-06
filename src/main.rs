@@ -2,6 +2,8 @@
 use clap::{Parser};
 use tokio::io::{self, AsyncBufReadExt};
 use crate::peer_manager::{create_node_id, summary_to_peer, PeerManager, PeerSummary};
+use tracing::{info, warn, error, debug, trace};
+use tracing_subscriber;
 
 mod peer;
 mod client;
@@ -24,9 +26,11 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
+    tracing_subscriber::fmt::init();
+    
     let args = Args::parse();
     let s_listen_addr = format!("127.0.0.1:{}", args.port);
-    
+
     //server side
     let s_info = PeerSummary { 
         listen_addr: Some(s_listen_addr),
@@ -42,7 +46,7 @@ async fn main() -> anyhow::Result<()>{
     let s_info_copy = s_info.clone();
     tokio::spawn(async move {
         if let Err(e) = server::run(s_info_copy, server_pm).await{
-            eprintln!("Error on server side: {}", e)
+            error!("Error on server side: {}", e)
         }
     });
     
@@ -57,7 +61,7 @@ async fn main() -> anyhow::Result<()>{
         };
         tokio::spawn(async move {
             if let Err(e) = client::connect(s_info, new_peer_info, client_pm).await{
-                eprintln!("Error on client side: {}", e)
+                error!("Error on client side: {}", e)
             }
         });
     }

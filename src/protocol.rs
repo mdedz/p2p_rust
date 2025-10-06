@@ -2,6 +2,7 @@ use crate::{network::handle_peer_list, peer::{self, Peer}, peer_manager::{PeerMa
 use std::{sync::Arc};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
+use tracing::{info, warn, error, debug, trace};
 
 pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -> anyhow::Result<()> {
     let (read_half, uname) = {
@@ -16,28 +17,23 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     if msg.starts_with("JOIN") {
         let parts: Vec<&str> = msg.splitn(2, '|').collect();
         if parts.len() < 2 {
-            eprintln!("Invalid JOIN message format");
+            error!("Invalid JOIN message format");
             return Ok(());
         }
 
         let peer_info: PeerSummary = match serde_json::from_str(parts[1]) {
             Ok(info) => info,
             Err(e) => {
-                eprintln!("Failed to parse JOIN payload: {}", e);
+                error!("Failed to parse JOIN payload: {}", e);
                 return Ok(());
             }
         };
 
         let node_id = {
             let mut peer_guard = peer.lock().await;
+            
             let node_id = peer_info.node_id_or_err()?;
             peer_guard.summary = peer_info;
-            // let peer_node_id = peer_info.node_id_or_err()?.clone();
-
-            // peer_guard.summary.uname = Some(peer_info.uname_or_err()?);
-            // peer_guard.summary.node_id = Some(peer_node_id.clone());
-            // peer_guard.summary.remote_addr = peer_info.remote_addr;
-            // peer_guard.summary.listen_addr = peer_info.listen_addr;
 
             node_id
         };
@@ -61,7 +57,7 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
                     addrs.push(listen_addr);
                 }
                 Err(e) => {
-                    eprintln!("Failed to parse peer entry '{}': {}", entry, e);
+                    error!("Failed to parse peer entry '{}': {}", entry, e);
                 }
             }
         }
@@ -85,7 +81,7 @@ pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, p
     let msg = join_payload(client_info, node_id).await;
     
     if let Err(e) = tx.send(msg).await {
-        eprintln!("send_join failed: {}", e);
+        error!("send_join failed: {}", e);
     }
 
     Ok(())
@@ -97,11 +93,11 @@ pub async fn send_peers(peer_manager: PeerManager) {
         let msg = payload.clone();
         let tx = {
             let p = peer_arc.lock().await;
-            println!("Sending peers to {:?} with {}", p.summary.listen_addr(), payload);
+            debug!("Sending peers to {:?} with {}", p.summary.listen_addr(), payload);
             p.tx_clone()
         };
         if let Err(e) = tx.send(format!("{}\n", msg)).await {
-            eprintln!("send_join failed: {}", e);
+            error!("send_join failed: {}", e);
         }
     }
 }
@@ -110,7 +106,6 @@ async fn join_payload(mut client_info:PeerSummary, node_id: String) -> String{
     client_info.node_id = Some(node_id);
 
     let client_info_s = serde_json::to_string(&client_info).unwrap();
-    // println!("{}", client_info_s);
     format!("JOIN|{}\n", client_info_s)
 }
 

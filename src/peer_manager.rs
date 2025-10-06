@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{net::TcpStream, sync::Mutex};
 use std::collections::HashMap;
 use uuid::Uuid;
+use tracing::{info, warn, error, debug, trace};
 
 pub fn summary_to_peer(summary: PeerSummary, socket: Option<TcpStream> ) -> Arc<Mutex<Peer>>{
     Arc::new(Mutex::new(Peer::new(
@@ -25,7 +26,7 @@ pub struct PeerSummary {
 }
 
 impl PeerSummary {
-    pub fn uname_or_err(&self) -> anyhow::Result<String> {
+    pub fn _uname_or_err(&self) -> anyhow::Result<String> {
         self.uname.clone()
             .ok_or_else(|| anyhow::anyhow!("uname is missing"))
     }
@@ -83,7 +84,7 @@ impl PeerManager {
     pub async fn add_peer(&self, node_id: String, peer: Arc<Mutex<Peer>>) {
         let mut peers = self.peers.lock().await;
         if peers.contains_key(&node_id) {
-            println!("Peer is already in list: {}", node_id);
+            warn!("Peer is already in list: {}", node_id);
             return;
         }
 
@@ -135,12 +136,12 @@ impl PeerManager {
 
         for peer in peers_snapshot {
             let tx = {
-            let peer_guard = peer.lock().await;
-            peer_guard.tx_clone()
-        };
+                let peer_guard = peer.lock().await;
+                peer_guard.tx_clone()
+            };
 
-        if let Err(e) = tx.send(msg.clone()).await {
-            eprintln!("Failed to broadcast to peer: {}", e);
+            if let Err(e) = tx.send(msg.clone()).await {
+                warn!("Failed to broadcast to peer: {}", e);
             }
         }
     }

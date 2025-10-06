@@ -5,8 +5,8 @@ use tokio::{
     sync::{mpsc, Mutex},
 };
 use std::collections::HashMap;
-
 use crate::peer_manager::PeerSummary;
+use tracing::{info, warn, error, debug, trace};
 
 #[derive(Clone)]
 pub struct TxRx {
@@ -60,7 +60,7 @@ impl Peer {
                 while let Some(msg) = rx.recv().await {
                     let mut socket = write_half_clone.lock().await;
                     if let Err(e) = socket.write_all(msg.as_bytes()).await {
-                        eprintln!("Failed to send message: {}", e);
+                        error!("Failed to send message: {}", e);
                         break;
                     }
                 }
