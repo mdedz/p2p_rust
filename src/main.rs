@@ -1,7 +1,7 @@
 
 use clap::{Parser};
 use tokio::io::{self, AsyncBufReadExt};
-use crate::peer_manager::{create_node_id, summary_to_peer, PeerManager, PeerSummary};
+use crate::peer_manager::{generate_unique_id, PeerManagerHandle, PeerSummary};
 use tracing::{info, warn, error, debug, trace};
 use tracing_subscriber;
 
@@ -35,12 +35,11 @@ async fn main() -> anyhow::Result<()>{
     let s_info = PeerSummary { 
         listen_addr: Some(s_listen_addr),
         remote_addr:None, 
-        node_id: Some(create_node_id()),
+        node_id: Some(generate_unique_id()),
         uname: args.uname
     };
 
-    let server_peer = summary_to_peer(s_info.clone(), None);
-    let peer_manager = PeerManager::new(server_peer);
+    let peer_manager = PeerManagerHandle::new();
     let server_pm = peer_manager.clone();
     
     let s_info_copy = s_info.clone();
@@ -80,7 +79,7 @@ async fn main() -> anyhow::Result<()>{
                     .await;
                 continue; 
         } else{
-            peer_manager.broadcast_message(format!("{}\n", line)).await;
+            peer_manager.broadcast(format!("{}\n", line)).await;
         }
         
     }

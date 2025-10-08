@@ -1,7 +1,6 @@
-use crate::{network::handle_peer_list, peer::{self, Peer}, peer_manager::{PeerManager, PeerSummary}};
+use crate::{network::handle_peer_list, peer::{self, Peer}, peer_manager::{PeerManagerHandle, PeerSummary}};
 use std::{sync::Arc};
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::Sender;
 use tracing::{info, warn, error, debug, trace};
 
 pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -> anyhow::Result<()> {
@@ -70,16 +69,10 @@ pub async fn handle_message(peer_manager: PeerManager, peer: Arc<Mutex<Peer>>) -
     Ok(())
 }
 
-pub async fn send_join(client_info:PeerSummary, server_peer: Arc<Mutex<Peer>>, peer_manager: PeerManager) -> anyhow::Result<()>{
-    let node_id = peer_manager.self_peer.lock().await.summary.node_id_or_err()?;
-
-    let tx: Sender<String> = {
-        let server_pg = server_peer.lock().await;
-        server_pg.tx_clone()
-    };
-
+pub async fn send_join(client_info:PeerSummary, server_conn_id: String, peer_manager: PeerManagerHandle) -> anyhow::Result<()>{
     let msg = join_payload(client_info, node_id).await;
-    
+    peer_manager.send_to(None, conn_id, msg);
+
     if let Err(e) = tx.send(msg).await {
         error!("send_join failed: {}", e);
     }
