@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpStream, sync::{mpsc::{Receiver}, oneshot}};
-use std::collections::HashMap;
+use tokio::{net::TcpStream, sync::{mpsc::{Receiver, Sender}, oneshot, RwLock}};
+use std::{collections::HashMap, sync::{Arc}};
 use uuid::Uuid;
 use tracing::{warn, debug, error, info};
 use tokio::{
@@ -8,6 +8,8 @@ use tokio::{
     net::{tcp::{OwnedReadHalf, OwnedWriteHalf}},
     sync::{mpsc},
 };
+
+use crate::protocol::{handle_join_json, handle_peers_json};
 
 
 pub fn generate_unique_id() -> String{
@@ -19,7 +21,7 @@ pub fn generate_unique_id() -> String{
 pub struct PeerSummary {
     pub remote_addr: Option<String>,
     pub listen_addr: Option<String>,
-    pub node_id:  Option<String>,
+    pub node_id: Option<String>,
     pub uname: Option<String>,
 }
 
@@ -34,23 +36,23 @@ impl PeerSummary {
             .ok_or_else(|| anyhow::anyhow!("listen_addr is missing"))
     }
 
-    pub fn node_id_or_err(&self) -> anyhow::Result<String> {
-        self.node_id.clone()
-            .ok_or_else(|| anyhow::anyhow!("node_id is missing"))
-    }
+    // pub fn node_id_or_err(&self) -> anyhow::Result<String> {
+    //     self.node_id.clone()
+    //         .ok_or_else(|| anyhow::anyhow!("node_id is missing"))
+    // }
 
-    pub fn remote_addr_or_err(&self) -> anyhow::Result<String> {
-        self.remote_addr.clone()
-            .ok_or_else(|| anyhow::anyhow!("remote_addr is missing"))
-    }
+    // pub fn remote_addr_or_err(&self) -> anyhow::Result<String> {
+    //     self.remote_addr.clone()
+    //         .ok_or_else(|| anyhow::anyhow!("remote_addr is missing"))
+    // }
 
     // pub fn uname(&self) -> Option<String> {
     //     self.uname.clone()
     // }
 
-    pub fn uname_or_default(&self) -> String {
-        self.uname.clone().unwrap_or("Stranger".to_string())
-    }
+    // pub fn uname_or_default(&self) -> String {
+    //     self.uname.clone().unwrap_or("Stranger".to_string())
+    // }
 
     // pub fn listen_addr(&self) -> Option<String> {
     //     self.listen_addr.clone()
@@ -68,25 +70,28 @@ impl PeerSummary {
 #[derive(Clone)]
 struct PeerEntry {
     conn_id: String,                 
-    summary: PeerSummary,            
+    summary: Arc<RwLock<PeerSummary>>,            
     tx: mpsc::Sender<String>,
 }
 
 impl PeerEntry {
-    pub fn new (conn_id: String, summary:PeerSummary, socket: TcpStream, events_tx: mpsc::Sender<PeerEvent>) -> Self{
+    pub fn new (conn_id: String, summary:PeerSummary, socket: TcpStream, events_tx: mpsc::Sender<PeerEvent>) -> Arc<Self>{
         let (reader, writer) = socket.into_split();
         let (tx, rx) = mpsc::channel::<String>(60);
+        
+        let entry = Arc::new(Self { conn_id, summary: Arc::new(RwLock::new(summary)), tx });
+        let entry_clone = entry.clone();
 
-        Self::spawn_reader(reader, summary.node_id.clone().unwrap_or_default(), events_tx.clone());
+        Self::spawn_reader(entry_clone, reader, events_tx.clone());
         Self::spawn_writer(writer, rx);
 
-        Self { conn_id, summary, tx }
+        entry
     }
 
-    pub async fn send(&self, msg: String) -> anyhow::Result<()>{
-        self.tx.send(msg).await?;
-        Ok(())
-    }
+    // pub async fn send(&self, msg: String) -> anyhow::Result<()>{
+    //     self.tx.send(msg).await?;
+    //     Ok(())
+    // }
 
     pub fn spawn_writer(mut writer: OwnedWriteHalf, mut rx: mpsc::Receiver<String>) {
         tokio::spawn(async move {
@@ -103,13 +108,18 @@ impl PeerEntry {
         });
     }
 
-    pub fn spawn_reader(mut reader: OwnedReadHalf, node_id: String, events_tx: mpsc::Sender<PeerEvent>) {
+    pub fn spawn_reader(self: Arc<Self>, mut reader: OwnedReadHalf, events_tx: mpsc::Sender<PeerEvent>) {
         tokio::spawn(async move {
             let mut buf = BufReader::new(&mut reader);
             let mut line = String::new();
 
             loop {
                 line.clear();
+                let node_id = {
+                    let summary = self.summary.read().await;
+                    summary.node_id.clone().unwrap_or_default()
+                };
+                let conn_id = self.conn_id.clone();
                 match buf.read_line(&mut line).await {
                     Ok(0) => {
                         let _ = events_tx
@@ -118,11 +128,22 @@ impl PeerEntry {
 
                     Ok(_) => {
                         let msg = line.trim().to_string();
-                        if let Err(_) = events_tx
-                            .send(PeerEvent::Message { node_id: node_id.clone(), msg: msg })
-                            .await
-                        {
-                            warn!("PeerEvent channel closed");
+                        if msg.is_empty() { continue; }
+                        let res = (|| { 
+                            if msg.starts_with("JOIN|"){
+                                events_tx
+                                    .send(PeerEvent::Join { conn_id: conn_id.clone(), msg: msg })
+                            } else if msg.starts_with("PEERS|") {
+                                events_tx
+                                    .send(PeerEvent::Peers { node_id: node_id.clone(), msg: msg })
+                            } else {
+                                events_tx
+                                    .send(PeerEvent::Message { node_id: node_id.clone(), msg: msg })
+                            }
+                        })().await;
+
+                        if let Err(e) = res{
+                            warn!("PeerEvent channel closed {}", e);
                             break;
                         } 
                     }
@@ -144,6 +165,7 @@ impl PeerEntry {
 pub enum PeerEvent {
     Message { node_id: String, msg: String },
     Join { conn_id: String, msg: String },
+    Peers { node_id: String, msg: String },
     Connected { node_id: String },
     Disconnected { node_id: String },
     Error { node_id: String, error: String },
@@ -159,7 +181,6 @@ enum Command {
 
     RegisterNode {
         conn_id: String,
-        node_id: String,
         summary: PeerSummary,
         resp: oneshot::Sender<anyhow::Result<()>>,
     },
@@ -207,173 +228,227 @@ enum Command {
 #[derive(Clone)]
 pub struct PeerManagerHandle {
     tx: mpsc::Sender<Command>,
-    pub events_tx: mpsc::Sender<PeerEvent>,
 }
 
 impl PeerManagerHandle {
-    pub fn new() -> Self {
-        let (tx, mut rx) = mpsc::channel::<Command>(256);
-        let (events_tx, mut events_rx) = mpsc::channel::<PeerEvent>(1000);
-        let events_tx_c = events_tx.clone();
-        Self::spawn_peer_event_handler(events_rx);
-                
-        tokio::spawn(async move {
-            let mut conns: HashMap<String, PeerEntry> = HashMap::new();
-            let mut peers: HashMap<String, PeerEntry> = HashMap::new();
+    pub fn new() -> Arc<Self>  {
+        let (tx, rx) = mpsc::channel::<Command>(256);
+        let (events_tx, events_rx) = mpsc::channel::<PeerEvent>(1000);
 
-            while let Some(cmd) = rx.recv().await {
-                match cmd {
-                    Command::AddConn { conn_id, summary, socket, resp } => {
-                        let res = (|| {
-                            if conns.contains_key(&conn_id) {
-                                anyhow::bail!("conn already exists");
-                            }
-                            let entry = PeerEntry::new(conn_id.clone(), summary, socket, events_tx_c.clone());
-                            conns.insert(conn_id, entry);
-                            Ok(())
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    
-                    Command::RegisterNode { conn_id, node_id, summary, resp } => {
-                        let res = (|| {
-                            if let Some(mut entry) = conns.remove(&conn_id) {
-                                entry.summary.node_id = Some(node_id.clone());
-                                entry.summary = summary.clone();
-                                if let Some(old) = peers.remove(&node_id) {
-                                    warn!("Replacing existing peer with the same node_id {} ", node_id);
-                                    drop(old);
-                                }
-                                peers.insert(node_id.clone(), entry);
-                                Ok(())
-                            } else {
-                                if let Some(entry) = peers.get_mut(&node_id){
-                                    entry.summary = summary.clone();
-                                    Ok(())
-                                } else {
-                                    anyhow::bail!("conn_id not found and node_id not present");
-                                }
-                            }
-                        })();
-                        let _ = resp.send(res);
-                    }
-                
-                    Command::RemoveConn { conn_id } => {
-                        if let Some(entry) = conns.remove(&conn_id) {
-                            debug!("Dropping connection for {}", conn_id);
-                            drop(entry);
-                        } else {
-                            let maybe_key = peers.iter()
-                                .find_map(|(k, v)| if v.conn_id == conn_id { Some(k.clone()) } else { None });
-                            if let Some(node_id) = maybe_key {
-                                peers.remove(&node_id);
-                                debug!("Dropped connection from peers {}", node_id)
-                            } 
-                        };
-                    }
-                    Command::RemoveNode { node_id } => {
-                        if peers.remove(&node_id).is_some() {
-                            debug!("Removed node {}", node_id)
-                        }
-                    }
-                    Command::Broadcast { msg } => {
-                        for (node_id, entry) in peers.iter() {
-                            let send = entry.tx.clone();
-                            let m = msg.clone();
-                            let node_id = node_id.clone();
-                            tokio::spawn(async move{
-                                if let Err(e) = send.send(m.clone()).await {
-                                    warn!("Failed to send a message to peer {} message {} and e {}", node_id, m, e);
-                                }
-                            });
-                        };
-                    }
-                    Command::SendTo { node_id, conn_id, msg, resp } => {
-                        let res = (|| {
-                            if let Some(unique_id) = node_id.or(conn_id){
-                                if let Some(entry) = peers.get(&unique_id){
-                                    let send = entry.tx.clone();
-                                    let m = msg.clone();
-                                    let unique_id = unique_id.clone();
-                                    tokio::spawn(async move{
-                                        if let Err(e) = send.send(m.clone()).await {
-                                            warn!("Failed to send a message to peer {} message {} and e {}", unique_id, m, e);
-                                        }
-                                    });
-    
-                                    Ok(())
-                                } else {
-                                    anyhow::bail!("Could not find node to send a message node = {} and msg = {}", unique_id, msg)
-                                }
-                            } else {
-                                anyhow::bail!("None conn_id or node_id were passed");
-                            }
-                        })();
-                        let _ = resp.send(res);
-                    }
+        let handle = Arc::new(Self { tx });
+        let handle_clone = Arc::clone(&handle);
 
-                    Command::GetPeers { resp } => {
-                        let mut v = Vec::with_capacity(peers.len());
-                        for entry in peers.values() {
-                            v.push(entry.summary.clone())
-                        }
-                        let _ = resp.send(v);
-                    }
+        Self::spawn_peer_event_handler(handle_clone, events_rx);
+        tokio::spawn(Self::command_loop(handle.clone(), rx, events_tx));
 
-                    Command::ContainsListenAddr { listen_addr, resp } => {
-                        let mut found = false;
-                        for e in peers.values() {
-                            if e.summary.listen_addr.as_ref().map(|s| s.as_str()) == Some(listen_addr.as_str()) {
-                                found = true; break
-                            }
-                        };
-
-                        for e in conns.values() {
-                            if e.summary.listen_addr.as_ref().map(|s| s.as_str()) == Some(listen_addr.as_str()) {
-                                found = true; break
-                            }
-                        };
-
-                        let _ = resp.send(found);
-                    }
-
-                    Command::GetConn { conn_id, resp } => {
-                        let res = (|| {
-                            if let Some(conn) = conns.get(&conn_id){
-                                Ok(conn.summary.clone())
-                            } else {
-                                anyhow::bail!("No connection found by id: {}", conn_id)
-                            }
-                        })();
-                        let _ = resp.send(res);
-                    }
-
-                    Command::GetPeer { node_id, resp } => {
-                        let res = (|| {
-                            if let Some(conn) = peers.get(&node_id){
-                                Ok(conn.summary.clone())
-                            } else {
-                                anyhow::bail!("No connection found by id: {}", node_id)
-                            }
-                        })();
-                        let _ = resp.send(res);
-                    }
-                }
-            }
-        });
-
-        Self { tx, events_tx }
+        handle
     }
 
-    fn spawn_peer_event_handler(mut events_rx: Receiver<PeerEvent>) {
+    async fn command_loop(handle: Arc<Self>, mut rx: mpsc::Receiver<Command>, events_tx: Sender<PeerEvent>) {
+        let mut conns: HashMap<String, Arc<PeerEntry>> = HashMap::new();
+        let mut peers: HashMap<String, Arc<PeerEntry>> = HashMap::new();
+
+        while let Some(cmd) = rx.recv().await {
+            handle.handle_command(cmd, &mut conns, &mut peers, events_tx.clone()).await;
+        }
+    }
+
+    async fn handle_command(
+        &self,
+        cmd: Command,
+        conns: &mut HashMap<String, Arc<PeerEntry>>,
+        peers: &mut HashMap<String, Arc<PeerEntry>>,
+        events_tx: Sender<PeerEvent>
+    ) {
+        match cmd {
+            Command::AddConn { conn_id, summary, socket, resp } => {
+                let res = (|| {
+                    if conns.contains_key(&conn_id) {
+                        anyhow::bail!("conn already exists");
+                    }
+                    let entry = PeerEntry::new(conn_id.clone(), summary, socket, events_tx);
+                    conns.insert(conn_id, entry);
+                    Ok(())
+                })();
+                let _ = resp.send(res);
+            }
+            
+            Command::RegisterNode { conn_id, summary, resp } => {
+                let res: Result<(), anyhow::Error> = (|| {
+                    let summary_entry = summary.clone();
+                    let node_id = &summary_entry
+                        .node_id
+                        .ok_or_else(|| anyhow::anyhow!("Node id was not specified in summary"))?;
+
+                    if let Some(entry) = conns.remove(&conn_id) {
+                        let old_entry = Arc::clone(&entry);
+
+                        tokio::spawn(async move {
+                            let mut s = old_entry.summary.write().await;
+                            *s = summary.clone();
+                        });
+
+                        if let Some(old) = peers.remove(node_id) {
+                            warn!("Replacing existing peer with the same node_id {} ", node_id);
+                            drop(old);
+                        }
+
+                        peers.insert(node_id.clone(), entry);
+                        Ok(())
+                    } else {
+                        if let Some(entry) = peers.get_mut(node_id){
+                            let entry = Arc::clone(entry);
+
+                            tokio::spawn(async move {
+                                let mut s = entry.summary.write().await;
+                                *s = summary.clone();
+                            });
+                            Ok(())
+                        } else {
+                            anyhow::bail!("conn_id not found and node_id not present");
+                        }
+                    }
+                })();
+                let _ = resp.send(res);
+            }
+        
+            Command::RemoveConn { conn_id } => {
+                if let Some(entry) = conns.remove(&conn_id) {
+                    debug!("Dropping connection for {}", conn_id);
+                    drop(entry);
+                } else {
+                    let maybe_key = peers.iter()
+                        .find_map(|(k, v)| if v.conn_id == conn_id { Some(k.clone()) } else { None });
+                    if let Some(node_id) = maybe_key {
+                        peers.remove(&node_id);
+                        debug!("Dropped connection from peers {}", node_id)
+                    } 
+                };
+            }
+            Command::RemoveNode { node_id } => {
+                if peers.remove(&node_id).is_some() {
+                    debug!("Removed node {}", node_id)
+                }
+            }
+            Command::Broadcast { msg } => {
+                for (node_id, entry) in peers.iter() {
+                    let send = entry.tx.clone();
+                    let m = msg.clone();
+                    let node_id = node_id.clone();
+                    tokio::spawn(async move{
+                        if let Err(e) = send.send(m.clone()).await {
+                            warn!("Failed to send a message to peer {} message {} and e {}", node_id, m, e);
+                        }
+                    });
+                };
+            }
+            Command::SendTo { node_id, conn_id, msg, resp } => {
+                let res = (|| {
+                    let entry = (|| -> anyhow::Result<Option<&Arc<PeerEntry>>> {
+                        if let Some(node_id) = node_id {
+                            Ok(peers.get(&node_id))
+                        } else if let Some(conn_id) = conn_id {
+                            Ok(conns.get(&conn_id))
+                        } else {
+                            anyhow::bail!("No ids to send_to were passed")
+                        }
+                    })()?;
+                    if let Some(entry) = entry{
+                        let send = entry.tx.clone();
+                        let m = msg.clone();
+                        tokio::spawn(async move{
+                            if let Err(e) = send.send(m.clone()).await {
+                                warn!("Failed to send a message to peer message {} and e {}", m, e);
+                            }
+                        });
+
+                        Ok(())
+                    } else {
+                        anyhow::bail!("Could not find node to send a messageand msg = {}", msg)
+                    }
+                })();
+                let _ = resp.send(res);
+            }
+
+            Command::GetPeers { resp } => {
+                let mut v = Vec::with_capacity(peers.len());
+                for entry in peers.values() {
+                    let summary = entry.summary.read().await.clone();
+                    v.push(summary);
+                }
+
+                let _ = resp.send(v);
+            }
+
+            Command::ContainsListenAddr { listen_addr, resp } => {
+                let mut found = false;
+                for e in peers.values() {
+                    let summary = e.summary.read().await;
+                    if summary.listen_addr.as_ref().map(|s| s.as_str()) == Some(listen_addr.as_str()) {
+                        found = true; break
+                    }
+                };
+
+                for e in conns.values() {
+                    let summary = e.summary.read().await;
+                    if summary.listen_addr.as_ref().map(|s| s.as_str()) == Some(listen_addr.as_str()) {
+                        found = true; break
+                    }
+                };
+
+                let _ = resp.send(found);
+            }
+
+            Command::GetConn { conn_id, resp } => {
+                let res = (|| async {
+                    if let Some(entry) = conns.get(&conn_id) {
+                        let summary = entry.summary.read().await.clone();
+                        Ok(summary)
+                    } else {
+                        anyhow::bail!("No connection found by id: {}", conn_id)
+                    }
+                })().await;
+
+                let _ = resp.send(res);
+            }
+
+            Command::GetPeer { node_id, resp } => {
+                let res = (|| async {
+                    if let Some(entry) = peers.get(&node_id){
+                        let summary = entry.summary.read().await.clone();
+                        Ok(summary)
+                    } else {
+                        anyhow::bail!("No connection found by id: {}", node_id)
+                    }
+                })().await;
+
+                let _ = resp.send(res);
+            }
+        }
+    }
+
+    fn spawn_peer_event_handler(self: Arc<Self>, mut events_rx: Receiver<PeerEvent>) {
         tokio::spawn(async move {
             while let Some(event) = events_rx.recv().await {
                 match event {
                     PeerEvent::Message { node_id, msg } => {
                         debug!("Received from {}: {}", node_id, msg);
+                        let peer = self.get_peer(node_id).await.clone();
+                        if let Some(peer) = peer {
+                            println!("{}: {}", peer.uname.unwrap_or("Stranger".to_string()), msg);
+                        };
                     }
                     PeerEvent::Join { conn_id, msg } => {
                         debug!("Received Join from {}: {}", conn_id, msg);
+                        if let Err(e) = handle_join_json(self.clone(), msg.clone(), conn_id.clone()).await {
+                            error!("Error during handling join {}", e)                            
+                        };
+                    }
+                    PeerEvent::Peers { node_id, msg } => {
+                        debug!("Received Peers from {}: {}", node_id, msg);
+                        if let Err(e) = handle_peers_json(self.clone(), msg.clone(), node_id.clone()).await {
+                            error!("Error during handling peers {}", e)                            
+                        };
                     }
                     PeerEvent::Disconnected { node_id } => {
                         info!("Peer {} disconnected", node_id);
@@ -396,9 +471,9 @@ impl PeerManagerHandle {
         resp_rx.await.map_err(|e| anyhow::anyhow!(e))?
     }
 
-    pub async fn register_node(&self, conn_id: String, node_id: String, summary: PeerSummary) -> anyhow::Result<()> {
+    pub async fn register_node(&self, conn_id: String, summary: PeerSummary) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        let cmd = Command::RegisterNode { conn_id, node_id, summary, resp: resp_tx };
+        let cmd = Command::RegisterNode { conn_id, summary, resp: resp_tx };
         self.tx.send(cmd).await.map_err(|e| anyhow::anyhow!("actor stopped: {}", e))?;
         resp_rx.await.map_err(|e| anyhow::anyhow!(e))?
     }

@@ -2,10 +2,9 @@
 use clap::{Parser};
 use tokio::io::{self, AsyncBufReadExt};
 use crate::peer_manager::{generate_unique_id, PeerManagerHandle, PeerSummary};
-use tracing::{info, warn, error, debug, trace};
+use tracing::{error};
 use tracing_subscriber;
 
-mod peer;
 mod client;
 mod server;
 mod protocol;
@@ -72,15 +71,15 @@ async fn main() -> anyhow::Result<()>{
         let line_trim = line.trim();
         
         if line_trim.is_empty() { continue; }
-        if line_trim.starts_with("/"){
-                let ui_pm = peer_manager.clone();
-                ui::parse_command(
-                    &line_trim[1..], ui_pm)
-                    .await;
-                continue; 
-        } else{
-            peer_manager.broadcast(format!("{}\n", line)).await;
-        }
+        // if line_trim.starts_with("/"){
+        //         let ui_pm = peer_manager.clone();
+        //         ui::parse_command(
+        //             &line_trim[1..], ui_pm)
+        //             .await;
+        //         continue; 
+        // } else{
+        // }
+        peer_manager.broadcast(format!("{}\n", line)).await;
         
     }
     Ok(())
