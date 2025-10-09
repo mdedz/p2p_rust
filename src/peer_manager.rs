@@ -119,6 +119,7 @@ impl PeerEntry {
                     let summary = self.summary.read().await;
                     summary.node_id.clone().unwrap_or_default()
                 };
+
                 let conn_id = self.conn_id.clone();
                 match buf.read_line(&mut line).await {
                     Ok(0) => {
@@ -292,7 +293,7 @@ impl PeerManagerHandle {
                             warn!("Replacing existing peer with the same node_id {} ", node_id);
                             drop(old);
                         }
-
+                        
                         peers.insert(node_id.clone(), entry);
                         Ok(())
                     } else {

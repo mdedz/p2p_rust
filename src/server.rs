@@ -39,7 +39,7 @@ pub async fn run(server_info: PeerSummary, peer_manager: Arc<PeerManagerHandle>)
                 error!("Send join failed on server side{}", e);
             };
 
-            send_peers(&peer_manager).await;
+            // send_peers(&peer_manager).await;
             // network::listen(peer.clone(), pm_copy).await;
         });
     }

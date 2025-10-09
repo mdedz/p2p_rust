@@ -15,7 +15,6 @@ pub async fn handle_join_json(peer_manager: Arc<PeerManagerHandle>, msg: String,
                 anyhow::bail!("Failed to parse JOIN payload: {}", e);
             }
         };
-
         peer_manager.register_node(conn_id, peer_info).await?;
         send_peers(&peer_manager).await;
 
@@ -25,7 +24,7 @@ pub async fn handle_join_json(peer_manager: Arc<PeerManagerHandle>, msg: String,
 pub async fn handle_peers_json(peer_manager: Arc<PeerManagerHandle>, msg: String, node_id: String) -> anyhow::Result<()> {
     let self_peer = peer_manager
         .get_peer(node_id.clone()).await
-        .ok_or_else(|| {anyhow::anyhow!("Node id not found for peers {} fdsfsd", node_id)})?;
+        .ok_or_else(|| {anyhow::anyhow!("Node id not found for peers {}", node_id)})?;
 
     let peers_str = &msg["PEERS|".len()..];
     let mut addrs: Vec<String> = Vec::new();
@@ -62,11 +61,12 @@ pub async fn send_join(client_info:PeerSummary, server_conn_id: String, peer_man
 pub async fn send_peers(peer_manager: &PeerManagerHandle) {
     let summaries = peer_manager.get_peers().await;
     let payload = peers_payload(&summaries).await;
-
+    
     for peer_info in summaries {
+        debug!("Sending peers to {}, peers: {}", peer_info.node_id.clone().unwrap_or_default(), payload.clone());
         let msg = payload.clone();
         if let Err(e) = peer_manager.send_to(peer_info.node_id, None, msg).await {
-            error!("send_join failed: {}", e);
+            error!("send_peers failed: {}", e);
         }
     }
 }
