@@ -137,9 +137,13 @@ impl PeerEntry {
                             } else if msg.starts_with("PEERS|") {
                                 events_tx
                                     .send(PeerEvent::Peers { msg: msg }).await
-                            } else {
+                            } else if msg.starts_with("MSG") {
                                 events_tx
                                     .send(PeerEvent::Message { node_id: node_id.clone(), msg: msg }).await
+                            }
+                            else {
+                                warn!("Could not process msg {}", msg);
+                                Ok(())
                             }
                         })().await;
 
@@ -438,7 +442,9 @@ impl PeerManagerHandle {
                         debug!("Received from {}: {}", node_id, msg);
                         let peer = self.get_peer(node_id).await.clone();
                         if let Some(peer) = peer {
-                            println!("{}: {}", peer.uname.unwrap_or("Stranger".to_string()), msg);
+                            if let Some((_, msg)) = msg.split_once("|") {
+                                println!("{}: {}", peer.uname.unwrap_or("Stranger".to_string()), msg);
+                            }
                         };
                     }
                     PeerEvent::Join { conn_id, msg } => {
@@ -454,6 +460,7 @@ impl PeerManagerHandle {
                         };
                     }
                     PeerEvent::Disconnected { node_id } => {
+                        self.remove_node(node_id.clone()).await;
                         info!("Peer {} disconnected", node_id);
                     }
                     PeerEvent::Connected { node_id } => {

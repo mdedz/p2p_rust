@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()>{
         //         continue; 
         // } else{
         // }
-        peer_manager.broadcast(format!("{}\n", line)).await;
+        peer_manager.broadcast(format!("MSG|{}\n", line)).await;
         
     }
     Ok(())
