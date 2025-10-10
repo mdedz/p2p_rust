@@ -1,13 +1,15 @@
 
 use clap::{Parser};
-use tokio::io::{self, AsyncBufReadExt};
-use crate::peer_manager::{generate_unique_id, PeerManagerHandle, PeerSummary};
-use tracing::{error};
+use tokio::{io::{self, AsyncBufReadExt}};
+use std::net::SocketAddr;
+use crate::{peer_manager::{generate_unique_id, PeerManagerHandle, PeerSummary}, web_api::ApiState};
+use tracing::{error, debug};
 use tracing_subscriber;
 
 mod client;
 mod server;
 mod protocol;
+mod web_api;
 mod ui;
 mod peer_manager;
 mod network;
@@ -63,6 +65,21 @@ async fn main() -> anyhow::Result<()>{
             }
         });
     }
+
+    let api_state = ApiState { peer_manager: peer_manager.clone() };
+    let api_router = web_api::router(api_state);
+
+    let api_addr: SocketAddr = format!("127.0.0.1:{}", args.port + 100).parse().unwrap();
+
+    tokio::spawn(async move {
+        debug!("Web API listening on {}", api_addr);
+
+        let listener = tokio::net::TcpListener::bind(api_addr).await.unwrap();
+
+        if let Err(e) = axum::serve(listener, api_router).await {
+            error!("API server error: {}", e);
+        }
+    });
 
     let stdin = io::BufReader::new(io::stdin());
     let mut lines = stdin.lines();

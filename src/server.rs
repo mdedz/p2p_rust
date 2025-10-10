@@ -6,7 +6,7 @@ use tokio::{
 use crate::{peer_manager::{generate_unique_id}};
 use crate::peer_manager::{PeerSummary};
 use crate::{peer_manager::PeerManagerHandle};
-use crate::protocol::{send_join, send_peers};
+use crate::protocol::{send_join};
 use tracing::{error, debug};
 
 pub async fn run(server_info: PeerSummary, peer_manager: Arc<PeerManagerHandle>) -> anyhow::Result<()>{

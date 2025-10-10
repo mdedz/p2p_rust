@@ -274,6 +274,7 @@ impl PeerManagerHandle {
                     }
                     let entry = PeerEntry::new(conn_id.clone(), summary, socket, events_tx);
                     conns.insert(conn_id, entry);
+                    
                     Ok(())
                 })();
                 let _ = resp.send(res);
@@ -467,7 +468,7 @@ impl PeerManagerHandle {
                         info!("Peer {} connected", node_id);
                     }
                     PeerEvent::Error { node_id, error } => {
-                        error!("{}", error);
+                        error!("{}: {}",node_id, error);
                     }
                 }
             }
