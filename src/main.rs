@@ -1,8 +1,8 @@
 
 use clap::{Parser};
-use tokio::{io::{self, AsyncBufReadExt}};
+use tokio::{io::{self, AsyncBufReadExt}, sync::mpsc};
 use std::net::SocketAddr;
-use crate::{peer_manager::{generate_unique_id, PeerManagerHandle, PeerSummary}, web_api::ApiState};
+use crate::{peer_manager::{generate_unique_id, AppState, FrontendEvent, PeerEvent, PeerManagerHandle, PeerSummary}, web_api::ApiState};
 use tracing::{error, debug};
 use tracing_subscriber;
 
@@ -10,7 +10,6 @@ mod client;
 mod server;
 mod protocol;
 mod web_api;
-mod ui;
 mod peer_manager;
 mod network;
 
@@ -39,10 +38,11 @@ async fn main() -> anyhow::Result<()>{
         node_id: Some(generate_unique_id()),
         uname: args.uname
     };
-
-    let peer_manager = PeerManagerHandle::new(s_info.clone());
-    let server_pm = peer_manager.clone();
+    let (web_api_tx, web_api_rx) = mpsc::channel::<FrontendEvent>(1000);
+    let peer_manager = PeerManagerHandle::new(s_info.clone(), web_api_tx);
     
+    let server_pm = peer_manager.clone();
+
     let s_info_copy = s_info.clone();
     tokio::spawn(async move {
         if let Err(e) = server::run(s_info_copy, server_pm).await{
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()>{
         });
     }
 
-    let api_state = ApiState { peer_manager: peer_manager.clone() };
+    let api_state = ApiState { peer_manager: peer_manager.clone(), web_api_rx };
     let api_router = web_api::router(api_state);
 
     let api_addr: SocketAddr = format!("127.0.0.1:{}", args.port + 100).parse().unwrap();

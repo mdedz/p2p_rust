@@ -11,11 +11,20 @@ use tokio::{
 
 use crate::protocol::{handle_join_json, handle_peers_json};
 
+pub struct AppState {
+    pub peer_manager: Arc<PeerManagerHandle>,
+    pub web_api_tx: Sender<FrontendEvent>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub enum FrontendEvent {
+    PeerJoined(String),
+    MessageReceived { from: String, content: String },
+}
 
 pub fn generate_unique_id() -> String{
     Uuid::new_v4().to_string()
 }
-
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PeerSummary {
@@ -237,7 +246,7 @@ pub struct PeerManagerHandle {
 }
 
 impl PeerManagerHandle {
-    pub fn new(self_peer_info: PeerSummary) -> Arc<Self>  {
+    pub fn new(self_peer_info: PeerSummary, web_api_tx: Sender<FrontendEvent>) -> Arc<Self>  {
         let (tx, rx) = mpsc::channel::<Command>(256);
         let (events_tx, events_rx) = mpsc::channel::<PeerEvent>(1000);
 
