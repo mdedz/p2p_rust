@@ -37,7 +37,7 @@ pub async fn handle_peers_json(peer_manager: Arc<PeerManagerHandle>, msg: String
 
         match serde_json::from_str::<PeerSummary>(entry) {
             Ok(peer_summary) => {
-                let listen_addr = peer_summary.listen_addr_or_err()?;
+                let listen_addr = peer_summary.listen_addr_or_err(10)?;
                 addrs.push(listen_addr);
             }
             Err(e) => {

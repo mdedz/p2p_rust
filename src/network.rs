@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 
 pub async fn connect_new_peer(self_peer: &PeerSummary, listen_addr: String, pm: Arc<PeerManagerHandle>) -> anyhow::Result<String> {
     let l_addr_copy = listen_addr.clone();
-    let pm_listen_addr = self_peer.listen_addr_or_err()?;
+    let pm_listen_addr = self_peer.listen_addr_or_err(2)?;
     
     if  pm_listen_addr == listen_addr {
         anyhow::bail!("Cannot connect to itself {}", listen_addr)

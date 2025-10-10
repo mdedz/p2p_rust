@@ -11,7 +11,7 @@ use tracing::{error, debug};
 
 pub async fn run(server_info: PeerSummary, peer_manager: Arc<PeerManagerHandle>) -> anyhow::Result<()>{
     let server_info_copy = server_info.clone();
-    let listen_addr = server_info_copy.listen_addr_or_err()?;
+    let listen_addr = server_info_copy.listen_addr_or_err(7)?;
     
     let listener = TcpListener::bind(listen_addr.as_str()).await?;
     debug!("Server listening on {}", listen_addr);

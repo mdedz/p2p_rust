@@ -31,9 +31,9 @@ impl PeerSummary {
             .ok_or_else(|| anyhow::anyhow!("uname is missing"))
     }
 
-    pub fn listen_addr_or_err(&self) -> anyhow::Result<String> {
+    pub fn listen_addr_or_err(&self, test: u16) -> anyhow::Result<String> {
         self.listen_addr.clone()
-            .ok_or_else(|| anyhow::anyhow!("listen_addr is missing"))
+            .ok_or_else(|| anyhow::anyhow!("listen_addr is missing {}", test))
     }
 
     // pub fn node_id_or_err(&self) -> anyhow::Result<String> {
@@ -276,19 +276,20 @@ impl PeerManagerHandle {
             }
             
             Command::RegisterNode { conn_id, summary, resp } => {
-                let res: Result<(), anyhow::Error> = (|| {
+                let res: Result<(), anyhow::Error> = (|| async {
                     let summary_entry = summary.clone();
                     let node_id = &summary_entry
                         .node_id
-                        .ok_or_else(|| anyhow::anyhow!("Node id was not specified in summary"))?;
-
+                        .ok_or_else(|| anyhow::anyhow!("Node id was not specified in summary"))?
+                        .clone();
+                   
                     if let Some(entry) = conns.remove(&conn_id) {
                         let old_entry = Arc::clone(&entry);
 
-                        tokio::spawn(async move {
+                        {
                             let mut s = old_entry.summary.write().await;
                             *s = summary.clone();
-                        });
+                        };
 
                         if let Some(old) = peers.remove(node_id) {
                             warn!("Replacing existing peer with the same node_id {} ", node_id);
@@ -310,7 +311,7 @@ impl PeerManagerHandle {
                             anyhow::bail!("conn_id not found and node_id not present");
                         }
                     }
-                })();
+                })().await;
                 let _ = resp.send(res);
             }
         
