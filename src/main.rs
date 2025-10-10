@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()>{
         uname: args.uname
     };
 
-    let peer_manager = PeerManagerHandle::new();
+    let peer_manager = PeerManagerHandle::new(s_info.clone());
     let server_pm = peer_manager.clone();
     
     let s_info_copy = s_info.clone();

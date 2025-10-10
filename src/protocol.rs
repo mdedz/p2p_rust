@@ -21,10 +21,10 @@ pub async fn handle_join_json(peer_manager: Arc<PeerManagerHandle>, msg: String,
         Ok(())
 }
 
-pub async fn handle_peers_json(peer_manager: Arc<PeerManagerHandle>, msg: String, node_id: String) -> anyhow::Result<()> {
-    let self_peer = peer_manager
-        .get_peer(node_id.clone()).await
-        .ok_or_else(|| {anyhow::anyhow!("Node id not found for peers {}", node_id)})?;
+pub async fn handle_peers_json(peer_manager: Arc<PeerManagerHandle>, msg: String) -> anyhow::Result<()> {
+    // let self_peer = peer_manager
+    //     .get_peer(node_id.clone()).await
+    //     .ok_or_else(|| {anyhow::anyhow!("Node id not found for peers {}", node_id)})?;
 
     let peers_str = &msg["PEERS|".len()..];
     let mut addrs: Vec<String> = Vec::new();
@@ -46,13 +46,13 @@ pub async fn handle_peers_json(peer_manager: Arc<PeerManagerHandle>, msg: String
         }
     }
 
-    handle_peer_list(peer_manager, addrs, self_peer).await?;
+    handle_peer_list(peer_manager, addrs).await?;
     
     Ok(())
 }
 
 
-pub async fn send_join(client_info:PeerSummary, server_conn_id: String, peer_manager: &PeerManagerHandle) -> anyhow::Result<()>{
+pub async fn send_join(client_info:PeerSummary, server_conn_id: String, peer_manager: Arc<PeerManagerHandle>) -> anyhow::Result<()>{
     debug!("Sending join from {} to {}", client_info.clone().node_id.unwrap_or("none".to_string()), server_conn_id);
     let msg = join_payload(client_info).await;
     peer_manager.send_to(None, Some(server_conn_id), msg).await

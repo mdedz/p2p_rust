@@ -124,22 +124,22 @@ impl PeerEntry {
                 match buf.read_line(&mut line).await {
                     Ok(0) => {
                         let _ = events_tx
-                            .send(PeerEvent::Disconnected { node_id: node_id.clone() });
+                            .send(PeerEvent::Disconnected { node_id: node_id.clone() }).await;
                     }
 
                     Ok(_) => {
                         let msg = line.trim().to_string();
                         if msg.is_empty() { continue; }
-                        let res = (|| { 
+                        let res = (async || { 
                             if msg.starts_with("JOIN|"){
                                 events_tx
-                                    .send(PeerEvent::Join { conn_id: conn_id.clone(), msg: msg })
+                                    .send(PeerEvent::Join { conn_id: conn_id.clone(), msg: msg }).await
                             } else if msg.starts_with("PEERS|") {
                                 events_tx
-                                    .send(PeerEvent::Peers { node_id: node_id.clone(), msg: msg })
+                                    .send(PeerEvent::Peers { msg: msg }).await
                             } else {
                                 events_tx
-                                    .send(PeerEvent::Message { node_id: node_id.clone(), msg: msg })
+                                    .send(PeerEvent::Message { node_id: node_id.clone(), msg: msg }).await
                             }
                         })().await;
 
@@ -166,7 +166,7 @@ impl PeerEntry {
 pub enum PeerEvent {
     Message { node_id: String, msg: String },
     Join { conn_id: String, msg: String },
-    Peers { node_id: String, msg: String },
+    Peers { msg: String },
     Connected { node_id: String },
     Disconnected { node_id: String },
     Error { node_id: String, error: String },
@@ -229,14 +229,15 @@ enum Command {
 #[derive(Clone)]
 pub struct PeerManagerHandle {
     tx: mpsc::Sender<Command>,
+    pub self_peer_info: PeerSummary 
 }
 
 impl PeerManagerHandle {
-    pub fn new() -> Arc<Self>  {
+    pub fn new(self_peer_info: PeerSummary) -> Arc<Self>  {
         let (tx, rx) = mpsc::channel::<Command>(256);
         let (events_tx, events_rx) = mpsc::channel::<PeerEvent>(1000);
 
-        let handle = Arc::new(Self { tx });
+        let handle = Arc::new(Self { tx, self_peer_info });
         let handle_clone = Arc::clone(&handle);
 
         Self::spawn_peer_event_handler(handle_clone, events_rx);
@@ -351,7 +352,7 @@ impl PeerManagerHandle {
                         } else if let Some(conn_id) = conn_id {
                             Ok(conns.get(&conn_id))
                         } else {
-                            anyhow::bail!("No ids to send_to were passed")
+                            anyhow::bail!("No id to send_to was passed {}", msg)
                         }
                     })()?;
                     if let Some(entry) = entry{
@@ -445,9 +446,9 @@ impl PeerManagerHandle {
                             error!("Error during handling join {}", e)                            
                         };
                     }
-                    PeerEvent::Peers { node_id, msg } => {
-                        debug!("Received Peers from {}: {}", node_id, msg);
-                        if let Err(e) = handle_peers_json(self.clone(), msg.clone(), node_id.clone()).await {
+                    PeerEvent::Peers { msg } => {
+                        debug!("Received Peers from {}", msg);
+                        if let Err(e) = handle_peers_json(self.clone(), msg.clone()).await {
                             error!("Error during handling peers {}", e)                            
                         };
                     }
@@ -458,7 +459,7 @@ impl PeerManagerHandle {
                         info!("Peer {} connected", node_id);
                     }
                     PeerEvent::Error { node_id, error } => {
-                        error!(error);
+                        error!("{}", error);
                     }
                 }
             }

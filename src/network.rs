@@ -32,7 +32,7 @@ pub async fn connect_new_peer(self_peer: &PeerSummary, listen_addr: String, pm: 
             pm.add_conn(conn_id.clone(), summary, socket).await?;
 
             let client_info = self_peer.clone();
-            send_join(client_info, conn_id.clone(), &pm).await?;
+            send_join(client_info, conn_id.clone(), pm.clone()).await?;
 
             Ok(conn_id)
         }
@@ -45,7 +45,9 @@ pub async fn connect_new_peer(self_peer: &PeerSummary, listen_addr: String, pm: 
 }
 
 
-pub async fn handle_peer_list(pm: Arc<PeerManagerHandle>, peer_list: Vec<String>, self_peer:PeerSummary) -> anyhow::Result<()>{
+pub async fn handle_peer_list(pm: Arc<PeerManagerHandle>, peer_list: Vec<String>) -> anyhow::Result<()>{
+    let self_peer = pm.self_peer_info.clone();
+
     for listen_addr in peer_list {
         debug!("Connecting new peer {}", listen_addr);
         if let Err(e) = connect_new_peer(&self_peer, listen_addr, pm.clone()).await {

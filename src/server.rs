@@ -35,7 +35,7 @@ pub async fn run(server_info: PeerSummary, peer_manager: Arc<PeerManagerHandle>)
                 error!("Error during server run {}", e)
             };
             
-            if let Err(e) = send_join(server_info_c, conn_id, &peer_manager).await{
+            if let Err(e) = send_join(server_info_c, conn_id, peer_manager.clone()).await{
                 error!("Send join failed on server side{}", e);
             };
 
