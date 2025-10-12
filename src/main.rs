@@ -1,7 +1,7 @@
 
 use clap::{Parser};
 use tokio::{io::{self, AsyncBufReadExt}, sync::mpsc};
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr, sync::{Arc, Mutex}};
 use crate::{peer_manager::{generate_unique_id, AppState, FrontendEvent, PeerEvent, PeerManagerHandle, PeerSummary}, web_api::ApiState};
 use tracing::{error, debug};
 use tracing_subscriber;
@@ -66,15 +66,23 @@ async fn main() -> anyhow::Result<()>{
         });
     }
 
-    let api_state = ApiState { peer_manager: peer_manager.clone(), web_api_rx };
-    let api_router = web_api::router(api_state);
+    let api_state = ApiState {
+        peer_manager: peer_manager.clone(),
+        clients: Arc::new(Mutex::new(Vec::new())),
+    };
 
-    let api_addr: SocketAddr = format!("127.0.0.1:{}", args.port + 100).parse().unwrap();
+    let api_router = web_api::router(api_state, web_api_rx);
+
+    let api_addr: SocketAddr = format!("127.0.0.1:{}", args.port + 100)
+        .parse()
+        .expect("Invalid API address");
 
     tokio::spawn(async move {
         debug!("Web API listening on {}", api_addr);
 
-        let listener = tokio::net::TcpListener::bind(api_addr).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(api_addr)
+            .await
+            .expect("Failed to bind API port");
 
         if let Err(e) = axum::serve(listener, api_router).await {
             error!("API server error: {}", e);

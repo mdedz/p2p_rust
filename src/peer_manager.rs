@@ -253,7 +253,7 @@ impl PeerManagerHandle {
         let handle = Arc::new(Self { tx, self_peer_info });
         let handle_clone = Arc::clone(&handle);
 
-        Self::spawn_peer_event_handler(handle_clone, events_rx);
+        Self::spawn_peer_event_handler(handle_clone, events_rx, web_api_tx);
         tokio::spawn(Self::command_loop(handle.clone(), rx, events_tx));
 
         handle
@@ -444,7 +444,7 @@ impl PeerManagerHandle {
         }
     }
 
-    fn spawn_peer_event_handler(self: Arc<Self>, mut events_rx: Receiver<PeerEvent>) {
+    fn spawn_peer_event_handler(self: Arc<Self>, mut events_rx: Receiver<PeerEvent>, web_api_tx: Sender<FrontendEvent>) {
         tokio::spawn(async move {
             while let Some(event) = events_rx.recv().await {
                 match event {
@@ -453,12 +453,18 @@ impl PeerManagerHandle {
                         let peer = self.get_peer(node_id).await.clone();
                         if let Some(peer) = peer {
                             if let Some((_, msg)) = msg.split_once("|") {
-                                println!("{}: {}", peer.uname.unwrap_or("Stranger".to_string()), msg);
+                                let uname = peer.uname.clone().unwrap_or("Stranger".to_string());
+                                println!("{}: {}", uname, msg);
+                                
+                                let fe = FrontendEvent::MessageReceived { from: uname, content: msg.to_string() };
+                                let _ = web_api_tx.send(fe).await; 
                             }
                         };
                     }
                     PeerEvent::Join { conn_id, msg } => {
                         debug!("Received Join from {}: {}", conn_id, msg);
+                        let fe = FrontendEvent::PeerJoined(msg.clone());
+                        let _ = web_api_tx.send(fe).await;
                         if let Err(e) = handle_join_json(self.clone(), msg.clone(), conn_id.clone()).await {
                             error!("Error during handling join {}", e)                            
                         };
@@ -472,6 +478,8 @@ impl PeerManagerHandle {
                     PeerEvent::Disconnected { node_id } => {
                         self.remove_node(node_id.clone()).await;
                         info!("Peer {} disconnected", node_id);
+                        let fe = FrontendEvent::PeerJoined(format!("{} disconnected", node_id));
+                        let _ = web_api_tx.send(fe).await;
                     }
                     PeerEvent::Connected { node_id } => {
                         info!("Peer {} connected", node_id);

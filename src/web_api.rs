@@ -4,25 +4,21 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex, mpsc::Receiver},
-};
+use std::sync::{Arc, Mutex};
 use axum::extract::ws::{Message, WebSocket};
 use futures::{stream::StreamExt, SinkExt};
-use tokio::task;
+use tokio::{task, sync::mpsc};
 use tracing::debug;
-
+use tower_http::services::fs::ServeDir;
 use crate::peer_manager::{FrontendEvent, PeerManagerHandle};
 
 #[derive(Clone)]
 pub struct ApiState {
     pub peer_manager: Arc<PeerManagerHandle>,
-    pub clients: Arc<Mutex<HashSet<tokio::sync::mpsc::UnboundedSender<Message>>>>,
+    pub clients: Arc<Mutex<Vec<mpsc::UnboundedSender<Message>>>>,
 }
 
-pub fn router(state: ApiState, web_api_rx: Receiver<FrontendEvent>) -> Router {
-    // Spawn background task to forward events to all connected clients
+pub fn router(state: ApiState, web_api_rx: mpsc::Receiver<FrontendEvent>) -> Router {
     start_event_forwarder(state.clone(), web_api_rx);
 
     Router::new()
@@ -30,6 +26,7 @@ pub fn router(state: ApiState, web_api_rx: Receiver<FrontendEvent>) -> Router {
         .route("/send", post(send_message))
         .route("/ws", get(ws_handler))
         .with_state(state)
+        .fallback_service(ServeDir::new("frontend"))
 }
 
 async fn get_peers(State(state): State<ApiState>) -> impl IntoResponse {
@@ -61,12 +58,10 @@ async fn handle_socket(socket: WebSocket, state: ApiState) {
     debug!("WebSocket connected");
 
     let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let tx_c = tx.clone();
+    state.clients.lock().unwrap().push(tx.clone());
 
-    // Add this client to the global client list
-    state.clients.lock().unwrap().insert(tx.clone());
-
-    // Task for sending messages to this client
     let send_task = task::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if sender.send(msg).await.is_err() {
@@ -75,7 +70,6 @@ async fn handle_socket(socket: WebSocket, state: ApiState) {
         }
     });
 
-    // Task for receiving messages from this client
     let recv_state = state.clone();
     let recv_task = task::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
@@ -83,7 +77,7 @@ async fn handle_socket(socket: WebSocket, state: ApiState) {
                 if text.starts_with("/peers") {
                     let peers = recv_state.peer_manager.get_peers().await;
                     let json = serde_json::to_string(&peers).unwrap();
-                    let _ = tx.send(Message::Text(json));
+                    let _ = tx.send(Message::Text(json.into())); 
                 } else {
                     recv_state
                         .peer_manager
@@ -99,22 +93,22 @@ async fn handle_socket(socket: WebSocket, state: ApiState) {
         _ = recv_task => (),
     }
 
-    // Remove the client when disconnected
-    state.clients.lock().unwrap().remove(&tx);
+    let mut clients = state.clients.lock().unwrap();
+    clients.retain(|c| !c.same_channel(&tx_c));
     debug!("WebSocket disconnected");
 }
 
-fn start_event_forwarder(state: ApiState, web_api_rx: Receiver<FrontendEvent>) {
-    task::spawn_blocking(move || {
-        for event in web_api_rx {
+fn start_event_forwarder(state: ApiState, mut web_api_rx: mpsc::Receiver<FrontendEvent>) {
+    tokio::spawn(async move {
+        while let Some(event) = web_api_rx.recv().await {
+            println!("{:?}", serde_json::to_string(&event));
             let msg = match serde_json::to_string(&event) {
-                Ok(json) => Message::Text(json),
+                Ok(json) => Message::Text(json.into()),
                 Err(_) => continue,
             };
-            let clients = state.clients.lock().unwrap();
-            for client in clients.iter() {
-                let _ = client.send(msg.clone());
-            }
+            let mut clients = state.clients.lock().unwrap();
+            clients.retain(|client| client.send(msg.clone()).is_ok());
         }
     });
 }
+
