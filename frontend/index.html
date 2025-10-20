@@ -83,10 +83,10 @@
   </form>
 
   <script>
+    const peers_info = {};
     const pagePort = location.port ? parseInt(location.port) : 80;
     const wsPort = pagePort; 
     const WS_URL = `ws://${location.hostname}:${wsPort}/ws`;
-    console.log(WS_URL);
     const ws = new WebSocket(WS_URL);
     const messagesDiv = document.getElementById("messages");
     const peersDiv = document.getElementById("peers");
@@ -106,29 +106,41 @@
       ws.send("/peers"); 
     });
 
-ws.addEventListener("message", (event) => {
-  try {
-    const data = JSON.parse(event.data);
-    console.log(data);
-    if (data.MessageReceived) {
-      const msg = data.MessageReceived;
-      appendMessage(`${msg.from}: ${msg.content}`);
-      return;
-    }
+  ws.addEventListener("message", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      console.log(data);
+      if (data.MessageReceived) {
+        const msg = data.MessageReceived;
+        appendMessage(`${msg.from}: ${msg.content}`);
+        return;
+      }
 
-    if (Array.isArray(data)) {
-      peersDiv.innerHTML = "";
-      data.forEach(p => {
-        peersDiv.innerHTML += `${p.uname || "?"} (${p.listen_addr || "?"})<br>`;
-      });
-      return;
-    }
+      if (data.PeerDisconnected) {
+        const node_id = data.PeerDisconnected;
+        const peer = peers_info[node_id];
 
-    appendMessage(`[Event] ${event.data}`);
-  } catch (e) {
-    appendMessage(event.data);
-  }
-});
+        if (peer) {
+          appendMessage(`Peer ${peer.uname} disconnected`);
+        }
+        return;
+        
+      }
+      if (Array.isArray(data)) {
+        peersDiv.innerHTML = "";
+        data.forEach(p => {
+          peersDiv.innerHTML += `${p.uname || "?"} (${p.listen_addr || "?"})<br>`;
+          peers_info[p.node_id] = p;
+          console.log(peers_info);
+        });
+        return;
+      }
+
+      appendMessage(`[Event] ${event.data}`);
+    } catch (e) {
+      appendMessage(event.data);
+    }
+  });
 
     ws.addEventListener("close", () => {
       appendMessage("[Disconnected]");

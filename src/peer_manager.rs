@@ -19,6 +19,7 @@ pub struct AppState {
 #[derive(Clone, serde::Serialize)]
 pub enum FrontendEvent {
     PeerJoined(String),
+    PeerDisconnected(String),
     MessageReceived { from: String, content: String },
 }
 
@@ -134,6 +135,7 @@ impl PeerEntry {
                     Ok(0) => {
                         let _ = events_tx
                             .send(PeerEvent::Disconnected { node_id: node_id.clone() }).await;
+                        break;
                     }
 
                     Ok(_) => {
@@ -478,7 +480,7 @@ impl PeerManagerHandle {
                     PeerEvent::Disconnected { node_id } => {
                         self.remove_node(node_id.clone()).await;
                         info!("Peer {} disconnected", node_id);
-                        let fe = FrontendEvent::PeerJoined(format!("{} disconnected", node_id));
+                        let fe = FrontendEvent::PeerDisconnected(format!("{}", node_id));
                         let _ = web_api_tx.send(fe).await;
                     }
                     PeerEvent::Connected { node_id } => {
