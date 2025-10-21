@@ -46,35 +46,6 @@ impl PeerSummary {
             .ok_or_else(|| anyhow::anyhow!("listen_addr is missing {}", test))
     }
 
-    // pub fn node_id_or_err(&self) -> anyhow::Result<String> {
-    //     self.node_id.clone()
-    //         .ok_or_else(|| anyhow::anyhow!("node_id is missing"))
-    // }
-
-    // pub fn remote_addr_or_err(&self) -> anyhow::Result<String> {
-    //     self.remote_addr.clone()
-    //         .ok_or_else(|| anyhow::anyhow!("remote_addr is missing"))
-    // }
-
-    // pub fn uname(&self) -> Option<String> {
-    //     self.uname.clone()
-    // }
-
-    // pub fn uname_or_default(&self) -> String {
-    //     self.uname.clone().unwrap_or("Stranger".to_string())
-    // }
-
-    // pub fn listen_addr(&self) -> Option<String> {
-    //     self.listen_addr.clone()
-    // }
-
-    // pub fn node_id(&self) -> Option<String> {
-    //     self.node_id.clone()
-    // }
-
-    // pub fn remote_addr(&self) -> Option<String> {
-    //     self.remote_addr.clone()
-    // }
 }
 
 #[derive(Clone)]
@@ -97,11 +68,6 @@ impl PeerEntry {
 
         entry
     }
-
-    // pub async fn send(&self, msg: String) -> anyhow::Result<()>{
-    //     self.tx.send(msg).await?;
-    //     Ok(())
-    // }
 
     pub fn spawn_writer(mut writer: OwnedWriteHalf, mut rx: mpsc::Receiver<String>) {
         tokio::spawn(async move {
