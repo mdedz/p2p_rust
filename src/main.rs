@@ -1,14 +1,15 @@
 
 use clap::{Parser};
-use tokio::io::{self, AsyncBufReadExt};
-use crate::peer_manager::{generate_unique_id, PeerManagerHandle, PeerSummary};
-use tracing::{error};
+use tokio::{io::{self, AsyncBufReadExt}, sync::mpsc};
+use std::{collections::HashSet, net::SocketAddr, sync::{Arc, Mutex}};
+use crate::{peer_manager::{generate_unique_id, AppState, FrontendEvent, PeerEvent, PeerManagerHandle, PeerSummary}, web_api::ApiState};
+use tracing::{error, debug};
 use tracing_subscriber;
 
 mod client;
 mod server;
 mod protocol;
-mod ui;
+mod web_api;
 mod peer_manager;
 mod network;
 
@@ -37,10 +38,11 @@ async fn main() -> anyhow::Result<()>{
         node_id: Some(generate_unique_id()),
         uname: args.uname
     };
-
-    let peer_manager = PeerManagerHandle::new(s_info.clone());
-    let server_pm = peer_manager.clone();
+    let (web_api_tx, web_api_rx) = mpsc::channel::<FrontendEvent>(1000);
+    let peer_manager = PeerManagerHandle::new(s_info.clone(), web_api_tx);
     
+    let server_pm = peer_manager.clone();
+
     let s_info_copy = s_info.clone();
     tokio::spawn(async move {
         if let Err(e) = server::run(s_info_copy, server_pm).await{
@@ -64,6 +66,29 @@ async fn main() -> anyhow::Result<()>{
         });
     }
 
+    let api_state = ApiState {
+        peer_manager: peer_manager.clone(),
+        clients: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let api_router = web_api::router(api_state, web_api_rx);
+
+    let api_addr: SocketAddr = format!("127.0.0.1:{}", args.port + 100)
+        .parse()
+        .expect("Invalid API address");
+
+    tokio::spawn(async move {
+        debug!("Web API listening on {}", api_addr);
+
+        let listener = tokio::net::TcpListener::bind(api_addr)
+            .await
+            .expect("Failed to bind API port");
+
+        if let Err(e) = axum::serve(listener, api_router).await {
+            error!("API server error: {}", e);
+        }
+    });
+
     let stdin = io::BufReader::new(io::stdin());
     let mut lines = stdin.lines();
 
@@ -79,7 +104,7 @@ async fn main() -> anyhow::Result<()>{
         //         continue; 
         // } else{
         // }
-        peer_manager.broadcast(format!("{}\n", line)).await;
+        peer_manager.broadcast(format!("MSG|{}", line)).await;
         
     }
     Ok(())

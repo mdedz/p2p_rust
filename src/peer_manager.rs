@@ -11,11 +11,21 @@ use tokio::{
 
 use crate::protocol::{handle_join_json, handle_peers_json};
 
+pub struct AppState {
+    pub peer_manager: Arc<PeerManagerHandle>,
+    pub web_api_tx: Sender<FrontendEvent>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub enum FrontendEvent {
+    PeerJoined(String),
+    PeerDisconnected(String),
+    MessageReceived { from: String, content: String },
+}
 
 pub fn generate_unique_id() -> String{
     Uuid::new_v4().to_string()
 }
-
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PeerSummary {
@@ -31,40 +41,11 @@ impl PeerSummary {
             .ok_or_else(|| anyhow::anyhow!("uname is missing"))
     }
 
-    pub fn listen_addr_or_err(&self) -> anyhow::Result<String> {
+    pub fn listen_addr_or_err(&self, test: u16) -> anyhow::Result<String> {
         self.listen_addr.clone()
-            .ok_or_else(|| anyhow::anyhow!("listen_addr is missing"))
+            .ok_or_else(|| anyhow::anyhow!("listen_addr is missing {}", test))
     }
 
-    // pub fn node_id_or_err(&self) -> anyhow::Result<String> {
-    //     self.node_id.clone()
-    //         .ok_or_else(|| anyhow::anyhow!("node_id is missing"))
-    // }
-
-    // pub fn remote_addr_or_err(&self) -> anyhow::Result<String> {
-    //     self.remote_addr.clone()
-    //         .ok_or_else(|| anyhow::anyhow!("remote_addr is missing"))
-    // }
-
-    // pub fn uname(&self) -> Option<String> {
-    //     self.uname.clone()
-    // }
-
-    // pub fn uname_or_default(&self) -> String {
-    //     self.uname.clone().unwrap_or("Stranger".to_string())
-    // }
-
-    // pub fn listen_addr(&self) -> Option<String> {
-    //     self.listen_addr.clone()
-    // }
-
-    // pub fn node_id(&self) -> Option<String> {
-    //     self.node_id.clone()
-    // }
-
-    // pub fn remote_addr(&self) -> Option<String> {
-    //     self.remote_addr.clone()
-    // }
 }
 
 #[derive(Clone)]
@@ -87,11 +68,6 @@ impl PeerEntry {
 
         entry
     }
-
-    // pub async fn send(&self, msg: String) -> anyhow::Result<()>{
-    //     self.tx.send(msg).await?;
-    //     Ok(())
-    // }
 
     pub fn spawn_writer(mut writer: OwnedWriteHalf, mut rx: mpsc::Receiver<String>) {
         tokio::spawn(async move {
@@ -125,6 +101,7 @@ impl PeerEntry {
                     Ok(0) => {
                         let _ = events_tx
                             .send(PeerEvent::Disconnected { node_id: node_id.clone() }).await;
+                        break;
                     }
 
                     Ok(_) => {
@@ -137,9 +114,13 @@ impl PeerEntry {
                             } else if msg.starts_with("PEERS|") {
                                 events_tx
                                     .send(PeerEvent::Peers { msg: msg }).await
-                            } else {
+                            } else if msg.starts_with("MSG") {
                                 events_tx
                                     .send(PeerEvent::Message { node_id: node_id.clone(), msg: msg }).await
+                            }
+                            else {
+                                warn!("Could not process msg {}", msg);
+                                Ok(())
                             }
                         })().await;
 
@@ -233,14 +214,14 @@ pub struct PeerManagerHandle {
 }
 
 impl PeerManagerHandle {
-    pub fn new(self_peer_info: PeerSummary) -> Arc<Self>  {
+    pub fn new(self_peer_info: PeerSummary, web_api_tx: Sender<FrontendEvent>) -> Arc<Self>  {
         let (tx, rx) = mpsc::channel::<Command>(256);
         let (events_tx, events_rx) = mpsc::channel::<PeerEvent>(1000);
 
         let handle = Arc::new(Self { tx, self_peer_info });
         let handle_clone = Arc::clone(&handle);
 
-        Self::spawn_peer_event_handler(handle_clone, events_rx);
+        Self::spawn_peer_event_handler(handle_clone, events_rx, web_api_tx);
         tokio::spawn(Self::command_loop(handle.clone(), rx, events_tx));
 
         handle
@@ -270,25 +251,27 @@ impl PeerManagerHandle {
                     }
                     let entry = PeerEntry::new(conn_id.clone(), summary, socket, events_tx);
                     conns.insert(conn_id, entry);
+                    
                     Ok(())
                 })();
                 let _ = resp.send(res);
             }
             
             Command::RegisterNode { conn_id, summary, resp } => {
-                let res: Result<(), anyhow::Error> = (|| {
+                let res: Result<(), anyhow::Error> = (|| async {
                     let summary_entry = summary.clone();
                     let node_id = &summary_entry
                         .node_id
-                        .ok_or_else(|| anyhow::anyhow!("Node id was not specified in summary"))?;
-
+                        .ok_or_else(|| anyhow::anyhow!("Node id was not specified in summary"))?
+                        .clone();
+                   
                     if let Some(entry) = conns.remove(&conn_id) {
                         let old_entry = Arc::clone(&entry);
 
-                        tokio::spawn(async move {
+                        {
                             let mut s = old_entry.summary.write().await;
                             *s = summary.clone();
-                        });
+                        };
 
                         if let Some(old) = peers.remove(node_id) {
                             warn!("Replacing existing peer with the same node_id {} ", node_id);
@@ -310,7 +293,7 @@ impl PeerManagerHandle {
                             anyhow::bail!("conn_id not found and node_id not present");
                         }
                     }
-                })();
+                })().await;
                 let _ = resp.send(res);
             }
         
@@ -429,7 +412,7 @@ impl PeerManagerHandle {
         }
     }
 
-    fn spawn_peer_event_handler(self: Arc<Self>, mut events_rx: Receiver<PeerEvent>) {
+    fn spawn_peer_event_handler(self: Arc<Self>, mut events_rx: Receiver<PeerEvent>, web_api_tx: Sender<FrontendEvent>) {
         tokio::spawn(async move {
             while let Some(event) = events_rx.recv().await {
                 match event {
@@ -437,11 +420,19 @@ impl PeerManagerHandle {
                         debug!("Received from {}: {}", node_id, msg);
                         let peer = self.get_peer(node_id).await.clone();
                         if let Some(peer) = peer {
-                            println!("{}: {}", peer.uname.unwrap_or("Stranger".to_string()), msg);
+                            if let Some((_, msg)) = msg.split_once("|") {
+                                let uname = peer.uname.clone().unwrap_or("Stranger".to_string());
+                                println!("{}: {}", uname, msg);
+                                
+                                let fe = FrontendEvent::MessageReceived { from: uname, content: msg.to_string() };
+                                let _ = web_api_tx.send(fe).await; 
+                            }
                         };
                     }
                     PeerEvent::Join { conn_id, msg } => {
                         debug!("Received Join from {}: {}", conn_id, msg);
+                        let fe = FrontendEvent::PeerJoined(msg.clone());
+                        let _ = web_api_tx.send(fe).await;
                         if let Err(e) = handle_join_json(self.clone(), msg.clone(), conn_id.clone()).await {
                             error!("Error during handling join {}", e)                            
                         };
@@ -453,13 +444,16 @@ impl PeerManagerHandle {
                         };
                     }
                     PeerEvent::Disconnected { node_id } => {
+                        self.remove_node(node_id.clone()).await;
                         info!("Peer {} disconnected", node_id);
+                        let fe = FrontendEvent::PeerDisconnected(format!("{}", node_id));
+                        let _ = web_api_tx.send(fe).await;
                     }
                     PeerEvent::Connected { node_id } => {
                         info!("Peer {} connected", node_id);
                     }
                     PeerEvent::Error { node_id, error } => {
-                        error!("{}", error);
+                        error!("{}: {}",node_id, error);
                     }
                 }
             }

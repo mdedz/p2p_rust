@@ -1,140 +1,214 @@
-# Rust P2P Chat — `main` branch
+# Rust P2P Chat
 
-**Important:** The repository contains two branches: `legacy` (older implementation) and `main` (current refactored version). In short:
-
-* `legacy` — the classic implementation: `Peer` uses `Arc<Mutex<...>>`, each peer owns its own reader/writer, and `PeerManager` is a shared `Arc<Mutex<HashMap<...>>>`. Suitable for learning and simple network topologies.
-* `main` — a reworked, actor-based implementation: connections are identified by a temporary `conn_id` before registration (`JOIN`), the central `PeerManagerHandle` operates as an actor (mpsc commands + oneshot responses), socket I/O is handled within `PeerEntry`, which sends events to the manager. Main improvements include explicit access serialization, better separation of concerns, and production readiness.
+A simple **peer-to-peer (P2P) chat application** implemented in Rust using **Tokio** for asynchronous networking.  
+This project demonstrates how to build a decentralized network with an actor-based peer manager, broadcast messaging, and a small HTTP/WebSocket API.
 
 ---
 
-# Overview
+## 🧭 Overview
 
-`main` is a modern, stable, and scalable version of the Rust P2P chat built on top of `tokio`. The goal is to simplify connection management, remove overreliance on mutexes, and transition to an explicit actor model.
+Each node acts as both:
+- a **server** (accepting incoming TCP connections), and
+- a **client** (initiating connections to other peers).
 
-## Core Concepts
+The network is formed dynamically: peers exchange `JOIN` and `PEERS` messages encoded as simple text frames to discover and register each other.
 
-* Connections are created and assigned a `conn_id` — until a remote node sends a `JOIN`, it remains a temporary connection.
-* When `JOIN|<PeerSummary>` arrives, the manager registers that connection under a `node_id`, allowing messages to be addressed by `node_id`.
-* All operations on connection/peer collections go through the `PeerManagerHandle` (mpsc commands), which eliminates race conditions with HashMaps.
-* I/O (reader/writer) runs in independent async tasks rather than global mutexes.
+A lightweight **actor system** (implemented with `tokio::mpsc`) handles peer state management, message broadcasting, and coordination with the web API.
 
 ---
 
-## Quick Start
+## ✨ Features
 
-### Build
+- ⚡ Fully **asynchronous I/O** with Tokio
+- 🔁 **P2P architecture** — every node is both server and client
+- 👥 **Peer discovery** via `JOIN` and `PEERS` messages
+- 📢 **Message broadcasting** across peers
+- 🧠 **Actor-based peer manager** (no global locks!)
+- 🌐 **Web API & WebSocket** for frontend or external clients
+- 💬 **CLI chat** — type into stdin to broadcast messages
+- 🧩 Modular design: `server`, `client`, `network`, `protocol`, `peer_manager`, `web_api`
 
-```bash
-cargo build --release
+---
+
+## 📂 Module Overview
+
+| Module | Description |
+|--------|--------------|
+| **`main.rs`** | CLI entrypoint. Parses args (`--port`, `--peer`, `--uname`), starts listener, connects to peers, and spawns the web API. |
+| **`server.rs`** | Listens for incoming TCP peers, creates connection entries, and sends initial `JOIN` messages. |
+| **`client.rs`** | Initiates outbound connections to peers when `--peer` is provided. |
+| **`network.rs`** | Contains `connect_new_peer` (for outgoing connections) and `handle_peer_list` (for connecting to new peers discovered via `PEERS`). |
+| **`protocol.rs`** | Defines message types and parsing logic: handles `JOIN`, `PEERS`, and `MSG` frames. |
+| **`peer_manager.rs`** | Core actor managing peers and connections. Exposes async API for adding/removing peers, broadcasting, and sending. |
+| **`web_api.rs`** | Minimal Axum web server providing REST endpoints and a WebSocket interface for frontend integration. |
+
+---
+
+## 🧱 Core Data Structures
+
+### `PeerSummary`
+```rust
+pub struct PeerSummary {
+    pub remote_addr: Option<String>,
+    pub listen_addr: Option<String>,
+    pub node_id: Option<String>,
+    pub uname: Option<String>,
+}
+````
+
+Fields are optional because nodes gradually exchange info as they connect and register.
+
+---
+
+## 💬 Message Protocol
+
+Simple text-based framing (`\n` delimited):
+
+| Type      | Format | Description        |                                         |
+| --------- | ------ | ------------------ | --------------------------------------- |
+| **JOIN**  | `JOIN  | <json>`            | Introduce a node and share its metadata |
+| **PEERS** | `PEERS | <json>;<json>;...` | Share known peer summaries              |
+| **MSG**   | `MSG   | <payload>`         | Broadcast a chat message to all peers   |
+
+**Example:**
+
+```
+JOIN|{"listen_addr":"127.0.0.1:8081","node_id":"abc123","uname":"Bob"}
+PEERS|{"listen_addr":"127.0.0.1:8082"};{"listen_addr":"127.0.0.1:8083"}
+MSG|Hello, world!
 ```
 
-### Run a node (server + client in one process)
+---
+
+## ⚙️ How It Works
+
+1. Each node starts a TCP listener and a small HTTP API (on `port + 100`).
+2. When a connection is made, both peers exchange `JOIN` messages.
+3. Each node sends its current peer list as `PEERS|...`.
+4. When a new peer joins, others can connect automatically using `handle_peer_list`.
+5. All incoming messages (`MSG|text`) are broadcast to all connected peers.
+6. The **peer manager actor** handles concurrency safely by serializing commands over a channel.
+
+---
+
+## 🚀 Running
+
+### Start a node
 
 ```bash
-# start a server on port 8080
 cargo run -- --port 8080 --uname Alice
+```
 
-# connect a client to another node
+* Listens on TCP port **8080**
+* Starts web API on **8180** (`port + 100`)
+* Username is **Alice**
+
+### Connect another node
+
+```bash
 cargo run -- --port 8081 --peer 127.0.0.1:8080 --uname Bob
 ```
 
-After startup, type into stdin — each line will be broadcast to all known peers.
+* Connects to peer at `127.0.0.1:8080`
+* Exchanges `JOIN` and `PEERS` messages
 
-> Note: CLI command parsing (`/l`, `/p`) is currently commented out in `main`.
+### Chat from CLI
 
----
+Type into the terminal and press Enter — your message will be broadcast to all connected peers as:
 
-## Message Protocol
-
-All messages are newline-terminated strings (`\n`).
-
-* `JOIN|<json>` — connection registration. JSON matches `PeerSummary`.
-* `PEERS|<entry1>;<entry2>;...` — list of known peers, each `entry` is a JSON `PeerSummary`, separated by semicolons.
-* Any other line is treated as a chat message.
-
-`PeerSummary` example:
-
-```json
-{
-  "remote_addr": "127.0.0.1:1234",
-  "listen_addr": "127.0.0.1:8080",
-  "node_id": "...",
-  "uname": "Alice"
-}
+```
+MSG|<your text>\n
 ```
 
 ---
 
-## Project Structure (Main Files)
+## 🌐 Web API
 
-* `main.rs` — initialization, creates `PeerManagerHandle`, starts the server listener, optionally connects to a peer, reads stdin, and broadcasts messages.
-* `server.rs` — accepts incoming TCP connections, creates a `conn_id`, calls `peer_manager.add_conn(...)`, and sends a `JOIN` message with local info.
-* `client.rs` — initiates outgoing connections via `connect_new_peer(...)`.
-* `network.rs` — manages connection logic, prevents self-connections and duplicates, handles `connect_new_peer` and `handle_peer_list`.
-* `peer_manager.rs` — the core actor (`PeerManagerHandle`): receives commands (`AddConn`, `RegisterNode`, `Broadcast`, `SendTo`, `GetPeers`, etc.), maintains separate `HashMap`s for `conns` and `peers`, and processes `PeerEvent`s.
-* `protocol.rs` — parses `JOIN`/`PEERS`, builds payloads, and sends messages through the manager API.
-* `ui.rs` — command-line interface (temporarily disabled in `main`).
+Each node also runs an HTTP API on `127.0.0.1:(port + 100)`.
 
----
+| Endpoint | Method | Description                                     |
+| -------- | ------ | ----------------------------------------------- |
+| `/peers` | `GET`  | Returns all connected peers as JSON             |
+| `/send`  | `POST` | Broadcast a message: `{"msg":"Hello"}`          |
+| `/ws`    | `GET`  | WebSocket stream for real-time frontend updates |
 
-## PeerManagerHandle — Public API (Summary)
+### Example `curl` usage
 
-`PeerManagerHandle::new(self_peer_info) -> Arc<PeerManagerHandle>` — creates the actor and starts its loop.
+List peers:
 
-Async methods:
+```bash
+curl http://127.0.0.1:8180/peers
+```
 
-* `add_conn(conn_id, summary, socket) -> anyhow::Result<()>` — add a new temporary connection.
-* `register_node(conn_id, summary) -> anyhow::Result<()>` — register a node ID for a previously added connection.
-* `remove_conn(conn_id)` — remove a connection.
-* `remove_node(node_id)` — remove a registered node.
-* `broadcast(msg)` — send `msg` to all registered nodes.
-* `send_to(node_id: Option<String>, conn_id: Option<String>, msg: String) -> anyhow::Result<()>` — send message to a node or connection.
-* `get_peers() -> Vec<PeerSummary>` — get all registered peers.
-* `get_peer(node_id) -> Option<PeerSummary>` — get a peer summary by node ID.
-* `get_conn(conn_id) -> Option<PeerSummary>` — get a summary by connection ID.
-* `contains_listen_addr(addr) -> bool` — check if a peer with this `listen_addr` already exists.
+Send a message:
+
+```bash
+curl -X POST http://127.0.0.1:8180/send -H "Content-Type: application/json" -d '{"msg":"Hi peers!"}'
+```
 
 ---
 
-## Connection Behavior
+## 🧠 Architecture
 
-* On `AddConn`, a `PeerEntry` is spawned, creating reader/writer tasks:
+### Actor pattern
 
-  * The writer consumes from an mpsc channel and writes messages to the socket (each ending with `\n`).
-  * The reader consumes socket lines, creates `PeerEvent`s, and forwards them to `events_tx`.
-* On `PeerEvent::Join`, `handle_join_json` parses the `PeerSummary`, calls `register_node`, and triggers `send_peers`.
-* On `PeerEvent::Peers`, `handle_peers_json` parses the list and calls `handle_peer_list` to establish new outbound connections.
+* `PeerManagerHandle` exposes async methods.
+* Internally, it sends `Command` enums over a `tokio::mpsc` channel.
+* The background `command_loop` processes all mutations serially.
 
----
+### Peer lifecycle
 
-## Practical Notes and Limits
-
-* `conn_id` is generated via UUID. The local `node_id` is generated at startup (`main`), but for remote nodes, it comes via `JOIN`.
-* `PeerEntry` uses a buffered mpsc channel (capacity 60) for outbound messages.
-* The manager’s event channel has a capacity of 1000.
-* There’s no authentication/encryption yet — the protocol is plain text. TLS, Noise, or Signal will be added later.
+1. **Connection accepted/initiated** → `add_conn`
+2. **JOIN received** → `register_node`
+3. **PEERS received** → `handle_peer_list`
+4. **Disconnected** → cleanup from peer maps
 
 ---
 
-## Examples
+## 🧩 Dependencies
 
-* Self-connections are rejected (`Cannot connect to itself`).
-* If a `PEERS|` message arrives, the manager attempts to connect to all listed addresses via `connect_new_peer`.
-* After a successful `JOIN`, the remote node is moved from `conns` to `peers` and assigned a persistent `node_id`.
-
----
-
-## Future Improvements
-
-* Re-enable CLI commands (`/l`, `/p`, rename, etc.).
-* Add optional authentication and transport encryption.
-* Implement persistence of known peers and reconnection policy.
-* Add unit and integration tests for core components.
+* [`tokio`](https://docs.rs/tokio) — async runtime
+* [`axum`](https://docs.rs/axum) — web API & WebSocket
+* [`serde` / `serde_json`](https://serde.rs) — serialization
+* [`uuid`](https://docs.rs/uuid) — unique IDs for nodes/connections
+* [`clap`](https://docs.rs/clap) — CLI argument parsing
+* [`anyhow`](https://docs.rs/anyhow) — error handling
+* [`tracing`](https://docs.rs/tracing) — logging
+* [`tower-http`](https://docs.rs/tower-http) — for serving static frontend (optional)
 
 ---
 
-## License
+## 🧪 Example Network
 
-MIT
+```
+Alice (127.0.0.1:8080)
+   ↑         ↓
+Bob (127.0.0.1:8081)
+   ↑         ↓
+Carol (127.0.0.1:8082)
+```
+
+* Alice starts first
+* Bob connects to Alice
+* Alice sends Bob its known peers
+* Carol connects to Alice or Bob and learns about the other nodes
+* Now all three can exchange chat messages in real time!
+
+---
+
+## 🔧 Future Improvements
+
+* Persistent peer discovery cache
+* Reconnection & retry logic
+* Encrypted connections (TLS)
+* Authenticated JOIN messages
+* Message history storage
+* Frontend UI using WebSocket API
+
+---
+
+## 🪪 License
+
+MIT License — free to use, modify, and distribute.
 
 ---

@@ -6,12 +6,12 @@ use tokio::{
 use crate::{peer_manager::{generate_unique_id}};
 use crate::peer_manager::{PeerSummary};
 use crate::{peer_manager::PeerManagerHandle};
-use crate::protocol::{send_join, send_peers};
+use crate::protocol::{send_join};
 use tracing::{error, debug};
 
 pub async fn run(server_info: PeerSummary, peer_manager: Arc<PeerManagerHandle>) -> anyhow::Result<()>{
     let server_info_copy = server_info.clone();
-    let listen_addr = server_info_copy.listen_addr_or_err()?;
+    let listen_addr = server_info_copy.listen_addr_or_err(7)?;
     
     let listener = TcpListener::bind(listen_addr.as_str()).await?;
     debug!("Server listening on {}", listen_addr);
@@ -39,8 +39,7 @@ pub async fn run(server_info: PeerSummary, peer_manager: Arc<PeerManagerHandle>)
                 error!("Send join failed on server side{}", e);
             };
 
-            // send_peers(&peer_manager).await;
-            // network::listen(peer.clone(), pm_copy).await;
+
         });
     }
 }
