@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::peer_manager::{generate_unique_id, PeerSummary};
+use crate::peer_manager::{PeerEntry, PeerSummary, generate_unique_id};
+use crate::tls_utils::{make_client_config, make_connector, server_name};
 use crate::{peer_manager::PeerManagerHandle};
 use crate::protocol::{send_join};
 use tracing::{warn, error, debug};
@@ -11,7 +12,7 @@ pub async fn connect_new_peer(self_peer: &PeerSummary, listen_addr: String, pm: 
     let l_addr_copy = listen_addr.clone();
     let pm_listen_addr = self_peer.listen_addr_or_err(2)?;
     
-    if  pm_listen_addr == listen_addr {
+    if pm_listen_addr == listen_addr {
         anyhow::bail!("Cannot connect to itself {}", listen_addr)
     }
 
@@ -21,21 +22,58 @@ pub async fn connect_new_peer(self_peer: &PeerSummary, listen_addr: String, pm: 
 
     match TcpStream::connect(listen_addr.clone()).await {
         Ok(socket) => {
-            let summary = PeerSummary {
-                remote_addr: None,
-                listen_addr: Some(l_addr_copy),
-                node_id: None,
-                uname: None,
-            };
+            if pm.tls_enabled() {
+                let server_cert = pm.tls_cert().unwrap().certs[0].clone(); 
+                let client_cfg = make_client_config(&server_cert)?;
+                let connector = make_connector(client_cfg);
 
-            let conn_id = generate_unique_id();
-            pm.add_conn(conn_id.clone(), summary, socket).await?;
+                let host = listen_addr.split(":").next().ok_or_else(|| anyhow::anyhow!("Invalid listen addr"))?;
+                let sname = server_name(host)?;
+                
+                match connector.connect(sname, socket).await {
+                    Ok(tls_stream) => {
+                        let summary = PeerSummary {
+                            remote_addr: None,
+                            listen_addr: Some(l_addr_copy),
+                            node_id: None,
+                            uname: None,
+                        };
+            
+                        let conn_id = generate_unique_id();
 
-            let client_info = self_peer.clone();
-            send_join(client_info, conn_id.clone(), pm.clone()).await?;
+                        let entry = PeerEntry::new(conn_id.clone(), summary, tls_stream, pm.events_tx());
+                        pm.add_entry(conn_id.clone(), entry).await?;
+            
+                        let client_info = self_peer.clone();
+                        send_join(client_info, conn_id.clone(), pm.clone()).await?;
+            
+                        Ok(conn_id)
+                    }
 
-            Ok(conn_id)
+                    Err(e) => {
+                        let err_text = format!("TLS handshake failed to {}: {}", listen_addr, e);
+                        error!("{}", err_text);
+                        anyhow::bail!(err_text);
+                    }
+                }
+            } else {
+                let summary = PeerSummary {
+                    remote_addr: None,
+                    listen_addr: Some(l_addr_copy),
+                    node_id: None,
+                    uname: None,
+                };
+    
+                let conn_id = generate_unique_id();
+                pm.add_conn(conn_id.clone(), summary, socket).await?;
+    
+                let client_info = self_peer.clone();
+                send_join(client_info, conn_id.clone(), pm.clone()).await?;
+    
+                Ok(conn_id)
+            }
         }
+
         Err(e) => { 
             let err_text = format!("Failed to connect to {}: {}", listen_addr, e);
             error!("{}", err_text);

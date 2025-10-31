@@ -4,17 +4,11 @@ use std::{collections::HashMap, sync::{Arc}};
 use uuid::Uuid;
 use tracing::{warn, debug, error, info};
 use tokio::{
-    io::{AsyncWriteExt, BufReader, AsyncBufReadExt},
-    net::{tcp::{OwnedReadHalf, OwnedWriteHalf}},
+    io::{AsyncRead, AsyncWrite, split, AsyncWriteExt, BufReader, AsyncBufReadExt},
     sync::{mpsc},
 };
 
-use crate::protocol::{handle_join_json, handle_peers_json};
-
-pub struct AppState {
-    pub peer_manager: Arc<PeerManagerHandle>,
-    pub web_api_tx: Sender<FrontendEvent>,
-}
+use crate::{protocol::{handle_join_json, handle_peers_json}, tls_utils};
 
 #[derive(Clone, serde::Serialize)]
 pub enum FrontendEvent {
@@ -49,15 +43,18 @@ impl PeerSummary {
 }
 
 #[derive(Clone)]
-struct PeerEntry {
+pub struct PeerEntry {
     conn_id: String,                 
     summary: Arc<RwLock<PeerSummary>>,            
     tx: mpsc::Sender<String>,
 }
 
 impl PeerEntry {
-    pub fn new (conn_id: String, summary:PeerSummary, socket: TcpStream, events_tx: mpsc::Sender<PeerEvent>) -> Arc<Self>{
-        let (reader, writer) = socket.into_split();
+    pub fn new<S>(conn_id: String, summary:PeerSummary, socket: S, events_tx: mpsc::Sender<PeerEvent>) -> Arc<Self>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let (reader, writer) = split(socket);
         let (tx, rx) = mpsc::channel::<String>(60);
         
         let entry = Arc::new(Self { conn_id, summary: Arc::new(RwLock::new(summary)), tx });
@@ -69,7 +66,10 @@ impl PeerEntry {
         entry
     }
 
-    pub fn spawn_writer(mut writer: OwnedWriteHalf, mut rx: mpsc::Receiver<String>) {
+    pub fn spawn_writer<W>(mut writer: W, mut rx: mpsc::Receiver<String>) 
+    where 
+        W: AsyncWrite + Unpin + Send + 'static
+    {
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if let Err(e) = writer.write_all(msg.as_bytes()).await {
@@ -84,19 +84,24 @@ impl PeerEntry {
         });
     }
 
-    pub fn spawn_reader(self: Arc<Self>, mut reader: OwnedReadHalf, events_tx: mpsc::Sender<PeerEvent>) {
+    pub fn spawn_reader<R>(self: Arc<Self>, mut reader: R, events_tx: mpsc::Sender<PeerEvent>)
+    where 
+        R: AsyncRead + Unpin + Send + 'static
+    {
         tokio::spawn(async move {
             let mut buf = BufReader::new(&mut reader);
             let mut line = String::new();
 
             loop {
                 line.clear();
+                
                 let node_id = {
                     let summary = self.summary.read().await;
                     summary.node_id.clone().unwrap_or_default()
                 };
 
                 let conn_id = self.conn_id.clone();
+                
                 match buf.read_line(&mut line).await {
                     Ok(0) => {
                         let _ = events_tx
@@ -160,7 +165,11 @@ enum Command {
         socket: TcpStream,
         resp: oneshot::Sender<anyhow::Result<()>>,
     },
-
+    AddEntry {
+        conn_id: String,
+        entry: Arc<PeerEntry>,
+        resp: oneshot::Sender<anyhow::Result<()>>,
+    },
     RegisterNode {
         conn_id: String,
         summary: PeerSummary,
@@ -210,21 +219,37 @@ enum Command {
 #[derive(Clone)]
 pub struct PeerManagerHandle {
     tx: mpsc::Sender<Command>,
+    events_tx: mpsc::Sender<PeerEvent>,
+    tls_enabled: bool,
+    tls_cert: Option<Arc<tls_utils::TlsCert>>,
     pub self_peer_info: PeerSummary 
 }
 
 impl PeerManagerHandle {
-    pub fn new(self_peer_info: PeerSummary, web_api_tx: Sender<FrontendEvent>) -> Arc<Self>  {
+    pub fn new(self_peer_info: PeerSummary, web_api_tx: Sender<FrontendEvent>, tls_enabled: bool, tls_cert: Option<Arc<tls_utils::TlsCert>>) -> Arc<Self>  {
         let (tx, rx) = mpsc::channel::<Command>(256);
         let (events_tx, events_rx) = mpsc::channel::<PeerEvent>(1000);
 
-        let handle = Arc::new(Self { tx, self_peer_info });
+        let events_tx_c = events_tx.clone();
+        let handle = Arc::new(Self { tx, events_tx: events_tx_c, tls_enabled, tls_cert, self_peer_info });
         let handle_clone = Arc::clone(&handle);
 
         Self::spawn_peer_event_handler(handle_clone, events_rx, web_api_tx);
         tokio::spawn(Self::command_loop(handle.clone(), rx, events_tx));
 
         handle
+    }
+    
+    pub fn events_tx(&self) -> mpsc::Sender<PeerEvent> {
+        self.events_tx.clone()
+    }
+
+    pub fn tls_enabled(&self) -> bool {
+        self.tls_enabled.clone()
+    }
+
+    pub fn tls_cert(&self) -> Option<Arc<tls_utils::TlsCert>> {
+        self.tls_cert.clone()
     }
 
     async fn command_loop(handle: Arc<Self>, mut rx: mpsc::Receiver<Command>, events_tx: Sender<PeerEvent>) {
@@ -256,7 +281,18 @@ impl PeerManagerHandle {
                 })();
                 let _ = resp.send(res);
             }
-            
+
+            Command::AddEntry { conn_id, entry, resp } => {
+                let res = (|| {
+                    if conns.contains_key(&conn_id) {
+                        anyhow::bail!("conn already exists");
+                    }
+                    conns.insert(conn_id, entry);
+                    Ok(())
+                })();
+                let _ = resp.send(res);
+            }
+
             Command::RegisterNode { conn_id, summary, resp } => {
                 let res: Result<(), anyhow::Error> = (|| async {
                     let summary_entry = summary.clone();
@@ -463,6 +499,13 @@ impl PeerManagerHandle {
     pub async fn add_conn(&self, conn_id: String, summary: PeerSummary, socket: TcpStream) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         let cmd = Command::AddConn { conn_id, summary, socket, resp: resp_tx };
+        self.tx.send(cmd).await.map_err(|e| anyhow::anyhow!("actor stopped: {}", e))?;
+        resp_rx.await.map_err(|e| anyhow::anyhow!(e))?
+    }
+
+    pub async fn add_entry(&self, conn_id: String, entry: Arc<PeerEntry>) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        let cmd = Command::AddEntry { conn_id, entry, resp: resp_tx };
         self.tx.send(cmd).await.map_err(|e| anyhow::anyhow!("actor stopped: {}", e))?;
         resp_rx.await.map_err(|e| anyhow::anyhow!(e))?
     }

@@ -2,7 +2,6 @@
 target/
 **/*.rs.bk
 Cargo.lock
-
 # Ignore editor temporary files
 *.swp
 *.swo
@@ -32,4 +31,5 @@ release/
 
 # Other
 node_modules/
+tls/
 

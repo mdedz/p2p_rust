@@ -1,0 +1,43 @@
+version: "3.9"
+services:
+  node1:
+    build: .
+    image: tcp_rust:local
+    container_name: tcp_rust_node1
+    ports:
+      - "4001:4001"
+      - "4101:4101"
+    volumes:
+      - ./data/node1:/data
+      - ./tls:/tls:ro
+    environment:
+      - RUST_LOG=debug
+    command: ["--port","4001","--uname","node1","--tls"]
+
+  node2:
+    build: .
+    image: tcp_rust:local
+    container_name: tcp_rust_node2
+    ports:
+      - "4002:4002"
+      - "4102:4102"
+    volumes:
+      - ./data/node2:/data
+      - ./tls:/tls:ro
+    environment:
+      - RUST_LOG=debug
+    command: ["--port","4002","--uname","node2","--peer","node1:4001","--tls"]
+
+  node3:
+    build: .
+    image: tcp_rust:local
+    container_name: tcp_rust_node3
+    ports:
+      - "4003:4003"
+      - "4103:4103"
+    volumes:
+      - ./data/node3:/data
+      - ./tls:/tls:ro
+    environment:
+      - RUST_LOG=error
+    command: ["--port","4003","--uname","node3","--peer","node1:4001","--tls"]

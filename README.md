@@ -66,9 +66,9 @@ Simple text-based framing (`\n` delimited):
 
 | Type      | Format | Description        |                                         |
 | --------- | ------ | ------------------ | --------------------------------------- |
-| **JOIN**  | `JOIN  | <json>`            | Introduce a node and share its metadata |
-| **PEERS** | `PEERS | <json>;<json>;...` | Share known peer summaries              |
-| **MSG**   | `MSG   | <payload>`         | Broadcast a chat message to all peers   |
+| **JOIN**  | JOIN   | json               | Introduce a node and share its metadata |
+| **PEERS** | PEERS  | json;json;...      | Share known peer summaries              |
+| **MSG**   | MSG    | payload            | Broadcast a chat message to all peers   |
 
 **Example:**
 

@@ -1,8 +1,9 @@
 
 use clap::{Parser};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::{io::{self, AsyncBufReadExt}, sync::mpsc};
-use std::{collections::HashSet, net::SocketAddr, sync::{Arc, Mutex}};
-use crate::{peer_manager::{generate_unique_id, AppState, FrontendEvent, PeerEvent, PeerManagerHandle, PeerSummary}, web_api::ApiState};
+use std::{fs, net::SocketAddr, sync::{Arc, Mutex}};
+use crate::{peer_manager::{FrontendEvent, PeerManagerHandle, PeerSummary, generate_unique_id}, tls_utils::{TlsCert, generate_self_signed_cert}, web_api::ApiState};
 use tracing::{error, debug};
 use tracing_subscriber;
 
@@ -12,6 +13,7 @@ mod protocol;
 mod web_api;
 mod peer_manager;
 mod network;
+mod tls_utils;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -22,12 +24,15 @@ struct Args {
     peer: Option<String>,
     #[arg(long)]
     uname: Option<String>,
+    #[arg(long, default_value_t = false)]
+    tls: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
     tracing_subscriber::fmt::init();
     
+
     let args = Args::parse();
     let s_listen_addr = format!("127.0.0.1:{}", args.port);
 
@@ -39,11 +44,31 @@ async fn main() -> anyhow::Result<()>{
         uname: args.uname
     };
     let (web_api_tx, web_api_rx) = mpsc::channel::<FrontendEvent>(1000);
-    let peer_manager = PeerManagerHandle::new(s_info.clone(), web_api_tx);
+    let tls_enabled = args.tls;
+    
+    let tls_cert: Option<Arc<TlsCert>> = if tls_enabled { 
+        if fs::exists("tls/cert.der").unwrap_or(false) && fs::exists("tls/key.der").unwrap_or(false) {
+            let cert_bytes = fs::read("tls/cert.der")?;
+            let key_bytes = fs::read("tls/key.der")?;
+            let private_key = PrivateKeyDer::try_from(key_bytes)
+                                                            .map_err(|_| anyhow::anyhow!("Failed to parse private key"))?;
+            Some(Arc::new(TlsCert {
+                certs: vec![CertificateDer::from(cert_bytes)],
+                key: private_key,
+            }))
+        } else {
+            let tls = generate_self_signed_cert()?;
+            fs::write("tls/cert.der", tls.certs[0].as_ref())?;
+            fs::write("tls/key.der", tls.key.secret_der())?;
+            Some(Arc::new(tls))
+        }
+    } else {None};
+
+    let peer_manager = PeerManagerHandle::new(s_info.clone(), web_api_tx, tls_enabled, tls_cert);
     
     let server_pm = peer_manager.clone();
-
     let s_info_copy = s_info.clone();
+
     tokio::spawn(async move {
         if let Err(e) = server::run(s_info_copy, server_pm).await{
             error!("Error on server side: {}", e)
@@ -59,8 +84,10 @@ async fn main() -> anyhow::Result<()>{
             node_id: None,
             uname: None
         };
+        let s_info_copy = s_info.clone();
+
         tokio::spawn(async move {
-            if let Err(e) = client::connect(s_info, new_peer_info, client_pm).await{
+            if let Err(e) = client::connect(s_info_copy, new_peer_info, client_pm).await{
                 error!("Error on client side: {}", e)
             }
         });
@@ -107,5 +134,9 @@ async fn main() -> anyhow::Result<()>{
         peer_manager.broadcast(format!("MSG|{}", line)).await;
         
     }
-    Ok(())
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    }
+
+    // Ok(())
 }
